@@ -5,8 +5,41 @@ from unittest.mock import patch
 from ddgs.exceptions import DDGSException
 
 from collect import (
-    NOR_SHIPPING, announcements, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record,
+    NOR_SHIPPING, announcements, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields,
+    pohang_support, record,
 )
+from support_taxonomy import classify_support
+
+
+class SupportTaxonomyTest(unittest.TestCase):
+    def test_company_stage_does_not_replace_support_type(self):
+        entry = record("kstartup", "179824", "ICT 청년창업지원센터 입주 모집", "https://example.org/", "support")
+        classify_support(entry)
+        self.assertEqual(entry["support"]["stages"], ["prestartup", "early"])
+        self.assertEqual(entry["support"]["types"], ["infrastructure", "incubation"])
+        self.assertIn("사업장 등록·이전", entry["eligibility"])
+
+    def test_investor_matching_does_not_imply_direct_equity(self):
+        event = record("kstartup", "a", "엔젤투자 설명회 상담부스 모집", "https://example.org/", "support")
+        classify_support(event)
+        self.assertEqual(event["support"]["types"], ["finance"])
+        self.assertEqual(event["support"]["methods"], ["matching"])
+        self.assertNotIn("stages", event["support"])
+
+    def test_one_notice_can_match_both_pohang_support_tracks(self):
+        def get(name, url):
+            return ('<h2 class="title">해양기업 지원사업</h2>'
+                    '<div><span class="s_title">사업수행기관</span><div class="txt">포항테크노파크</div></div>'
+                    '<div><span class="s_title">신청기간</span><div class="txt">2026.04.17 ~ 2026.04.30</div></div>'
+                    '<div><span class="s_title">사업개요</span><div class="txt"><p>택 1</p>'
+                    '<p>R&amp;D 지원 : 수요연계형 개발</p><p>사업화 지원 : 시제품 제작 및 시험분석</p></div></div>').encode()
+
+        notice, = pohang_support(get)
+        classify_support(notice)
+        self.assertEqual([t["name"] for t in notice["support_tracks"]], ["R&D 지원", "사업화 지원"])
+        self.assertIn("research", notice["support"]["types"])
+        self.assertIn("testing", notice["support"]["types"])
+        self.assertEqual(notice["support"]["regions"], ["경북"])
 
 
 class PlanningTest(unittest.TestCase):

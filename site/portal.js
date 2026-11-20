@@ -58,6 +58,7 @@ const isClosed = (entry) => entry.deadline < today ||
 const briefingDate = new Intl.DateTimeFormat("ko-KR", {month: "long", day: "numeric", timeZone: "UTC"});
 const formatBriefDate = (value) => briefingDate.format(new Date(value + "T00:00:00Z"));
 const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+const supportFields = ["stages", "types", "methods", "regions"];
 const blank = () => ({ records: [], sources: {} });
 let data = blank();
 let selected = "all";
@@ -96,10 +97,23 @@ function searchTerms(query) {
   });
 }
 
+function supportLabels(entry, field) {
+  return (entry.support?.[field] ?? []).map((key) => data.support_facets?.[field]?.[key]).filter(Boolean);
+}
+
+function appendSupportTags(parent, entry, brief = false) {
+  const fields = brief ? ["stages", "types"] : supportFields;
+  const labels = fields.flatMap((field) => supportLabels(entry, field));
+  if (!labels.length) return;
+  const tags = addText(parent, "p", "", "meta support-tags");
+  (brief ? labels.slice(0, 3) : labels).forEach((label) => addText(tags, "span", label));
+}
+
 function matches(record, terms) {
   const gepTitles = (record.gep_notices ?? []).map((notice) => notice.title);
   const subject = [record.title, record.place, record.topic, record.eligibility, record.publisher,
     planningStages[record.planning_stage], data.sources[record.source],
+    ...supportFields.flatMap((field) => supportLabels(record, field)),
     ...gepTitles, gepTitles.length ? data.sources.gep : "", categories[record.category]]
     .filter(Boolean).join(" ");
   const compact = normalize(subject);
@@ -161,6 +175,7 @@ function appendBrief(parent, entry, deadline) {
     if (entry.deadline) addText(meta, "span", `${formatBriefDate(entry.deadline)} 마감`);
   }
   addText(addText(article, "h4", ""), "a", note?.title || entry.title).href = url.href;
+  appendSupportTags(article, entry, true);
   const lead = note?.lead || entry.topic || entry.eligibility || planningActions[entry.planning_stage];
   if (lead) addText(article, "p", lead, "briefing-lead");
   const linkLabel = entry.category === "industry" ? "출처에서 기사 읽기" :
@@ -220,10 +235,20 @@ function appendRecord(parent, entry, featured = false) {
     }
   }
   if (!meta.childElementCount) meta.remove();
-  if (entry.planning_stage && entry.eligibility) {
+  appendSupportTags(item, entry);
+  if (entry.eligibility && !entry.eligibility_url) {
     const eligibility = addText(item, "p", "", "eligibility");
-    addText(eligibility, "strong", "참여 대상 ");
+    addText(eligibility, "strong", entry.planning_stage ? "참여 대상 " : "신청 대상 ");
     addText(eligibility, "span", entry.eligibility);
+  }
+  if (entry.support_tracks?.length) {
+    const tracks = addText(item, "div", "", "support-tracks");
+    if (entry.support_track_note) addText(tracks, "p", entry.support_track_note, "meta");
+    entry.support_tracks.forEach((track) => {
+      const row = addText(tracks, "p", "");
+      addText(row, "strong", track.name + " ");
+      addText(row, "span", track.description);
+    });
   }
   if (featured) addText(item, "p", planningActions[entry.planning_stage], "eligibility");
   if (entry.eligibility && entry.eligibility_url?.startsWith("https://www.jcia.or.kr/")) {
@@ -240,12 +265,17 @@ function render() {
   const terms = searchTerms(el("query").value.trim());
   const source = el("source").value;
   const stage = selected === "rnd" ? el("planning-stage").value : "";
-  const defaultView = !terms.length && !source && !stage && el("sort").value === "latest";
+  const showSupport = ["all", "rnd", "support"].includes(selected) && Boolean(data.support_facets);
+  const filters = showSupport ? supportFields.map((field) => [field, el(`support-${field}`).value])
+    .filter(([, value]) => value) : [];
+  el("support-filters").hidden = !showSupport;
+  const defaultView = !terms.length && !source && !stage && !filters.length && el("sort").value === "latest";
   el("planning-stage-filter").hidden = selected !== "rnd";
   const results = data.records.filter((entry) =>
     (selected === "all" || entry.category === selected) &&
     (!source || entry.source === source || (source === "gep" && entry.gep_notices?.length)) &&
     (!stage || entry.planning_stage === stage) &&
+    filters.every(([field, value]) => entry.support?.[field]?.includes(value)) &&
     matches(entry, terms));
   const upcoming = (entry) => [entry, ...(entry.gep_notices ?? [])]
     .filter((notice) => notice.deadline && !isClosed(notice))
@@ -310,6 +340,13 @@ fetch(dataUrl, {cache: "no-cache"})
   })
   .then((payload) => {
     data = payload;
+    for (const field of supportFields) {
+      const control = el(`support-${field}`);
+      for (const [key, label] of Object.entries(data.support_facets?.[field] ?? {})) {
+        addText(control, "option", label).value = key;
+      }
+      control.addEventListener("change", reset);
+    }
     Object.entries(data.sources).forEach(([key, label]) => {
       addText(el("source"), "option", label).value = key;
     });

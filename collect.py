@@ -20,6 +20,7 @@ from ddgs import DDGS
 from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -209,6 +210,40 @@ def regional_planning(get):
                            place=publisher.replace("테크노파크", ""), eligibility=eligibility[1] if eligibility else "",
                            **planning_fields(title, fields["신청기간"].get_text(" ", strip=True))))
     return require(rows)
+
+
+def pohang_support(get):
+    key = "000000000121126"
+    url = params("https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do", pblancId=f"PBLN_{key}")
+    try:
+        detail = page(get, "biz_planning", url)
+    except PLANNING_HTTP as error:
+        print(f"Pohang TP support notice unavailable: {type(error).__name__}", file=sys.stderr)
+        return []
+    heading = detail.select_one("h2.title")
+    fields = {label.get_text(" ", strip=True): label.find_next_sibling("div", class_="txt")
+              for label in detail.select(".s_title")}
+    if not heading or not all(fields.get(name) for name in ("사업수행기관", "신청기간", "사업개요")):
+        return []
+    publisher = fields["사업수행기관"].get_text(" ", strip=True)
+    title = heading.get_text(" ", strip=True)
+    overview = fields["사업개요"].get_text("\n", strip=True)
+    rnd = re.search(r"R&D\s*지원\s*:\s*([^\n]+)", overview)
+    commercial = re.search(r"사업화\s*지원\s*:\s*([^\n]+)", overview)
+    period = planning_period(fields["신청기간"].get_text(" ", strip=True))
+    if publisher != "포항테크노파크" or not ("해양기업" in title and rnd and commercial and period):
+        return []
+    eligibility = ""
+    if "경상북도 내" in overview and "협약 후 3개월 이내" in overview:
+        eligibility = "경북에 본사·지사·공장·연구소가 있거나 협약 후 3개월 이내 경북으로 이전 가능한 기업."
+    return [record("regional_support", key, title, url, "support", publisher=publisher,
+                   place="경북", eligibility=eligibility,
+                   support_track_note="두 지원 중 하나를 선택합니다." if re.search(r"택\s*1", overview) else "",
+                   support_tracks=[
+                       {"name": "R&D 지원", "types": ["research"], "description": rnd[1]},
+                       {"name": "사업화 지원", "types": ["technical", "testing", "commercial", "management"],
+                        "description": commercial[1]},
+                   ], **period)]
 
 
 def bistep_planning(get):
@@ -772,6 +807,7 @@ def build(samples):
         sources["jcia"] = ("전남정보문화산업진흥원", jcia_notices)
         sources["nor_shipping"] = ("Nor-Shipping", nor_shipping)
         sources["tp_planning"] = ("지역 테크노파크", regional_planning)
+        sources["regional_support"] = ("지역 테크노파크 기업지원", pohang_support)
         sources["bistep_planning"] = ("BISTEP", bistep_planning)
         sources["nia_planning"] = ("NIA·AI허브", nia_planning)
         sources["nipa_demand"] = ("NIPA·NXT 수요조사", nipa_demand)
@@ -792,6 +828,8 @@ def build(samples):
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
     merge_exhibitions(records)
+    for entry in records.values():
+        classify_support(entry)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     for name in ("portal.css", "portal.js"):
@@ -801,6 +839,8 @@ def build(samples):
     payload = {"updated_at": updated_at.isoformat(), "sample": bool(samples),
                "sources": {key: label for key, (label, _) in sources.items() if key != "nipa_demand" or
                            any(row["source"] == key for row in records.values())},
+               "support_facets": {"types": TYPES, "stages": STAGES, "methods": METHODS,
+                                  "regions": {name: name for name in REGIONS}},
                "records": list(records.values())}
     temporary = dist / "data.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

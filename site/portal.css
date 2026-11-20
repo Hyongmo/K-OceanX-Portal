@@ -78,6 +78,13 @@ button:hover:not([aria-pressed="true"]) { border-color: var(--teal); }
 h2 { margin: 0; font-size: 1.45rem; letter-spacing: -.035em; }
 #summary { margin: .2rem 0 0; color: var(--muted); font-size: .9rem; }
 .filters label { display: grid; color: var(--muted); font-size: .9rem; gap: .22rem; }
+.support-filters { margin: 1rem 0 0; min-width: 0; padding: .65rem .9rem .85rem; border: 1px solid var(--line); border-radius: .55rem; }
+.support-filters legend { padding-inline: .25rem; font-weight: 680; }
+.support-filters .filters { justify-content: start; }
+.support-tags { margin: .3rem 0; }
+.support-tags span { border-radius: .2rem; padding: .08rem .38rem; background: #e9f4f1; color: #20524e; }
+.support-tracks { margin-top: .6rem; padding-inline-start: .7rem; border-inline-start: 2px solid #a4c7c2; }
+.support-tracks p { margin: .2rem 0; }
 select { appearance: none; border: 1px solid var(--line); border-radius: .4rem; padding: .46rem 2rem .46rem .6rem; color: #162634; background: linear-gradient(45deg, transparent 50%, #4e6372 51%) right .93rem center / .3rem .3rem no-repeat, linear-gradient(135deg, #4e6372 50%, transparent 51%) right .64rem center / .3rem .3rem no-repeat, white; }
 #results, #rnd-picks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: .65rem; overflow: hidden; background: white; }
 #results:empty { display: none; }
