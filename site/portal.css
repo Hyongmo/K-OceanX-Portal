@@ -26,11 +26,22 @@ a { color: inherit; }
   white-space: nowrap;
 }
 .brand-accent { color: #78e3c9; }
-.brand-kmi { width: clamp(7.4rem, 40vw, 12.5rem); margin-inline-start: auto; }
+.brand-kmi { position: relative; width: clamp(7.4rem, 40vw, 12.5rem); margin-inline-start: auto; }
 .brand img { display: block; width: 100%; height: auto; filter: brightness(0) invert(1); }
 /* The official lockup leaves a transparent gap around x=100. */
 .brand-symbol { width: clamp(2.75rem, 12vw, 3.5rem); aspect-ratio: 100 / 56; overflow: hidden; }
 .brand-symbol img { width: auto; height: 100%; }
+/* The lower-right area of the KMI lockup contains the English name. */
+.brand-kmi img { clip-path: polygon(0 0, 100% 0, 100% 60%, 27% 60%, 27% 100%, 0 100%); }
+.brand-kmi-center {
+  position: absolute;
+  inset-inline-start: 30%;
+  inset-block-start: 60%;
+  font-size: clamp(.49rem, 2.5vw, .79rem);
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
 .brand:focus-visible { outline-color: #8ae2d5; }
 .intro { color: white; background: linear-gradient(112deg, var(--navy) 20%, #174c59 100%); padding: clamp(2rem, 5vw, 4rem) 0; }
 .intro h1 { font-size: clamp(2rem, 5vw, 3.65rem); line-height: 1.17; letter-spacing: -.06em; margin: .3rem 0 .75rem; }
