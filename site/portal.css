@@ -81,6 +81,7 @@ h2 { margin: 0; font-size: 1.45rem; letter-spacing: -.035em; }
 .support-filters { margin: 1rem 0 0; min-width: 0; padding: .65rem .9rem .85rem; border: 1px solid var(--line); border-radius: .55rem; }
 .support-filters legend { padding-inline: .25rem; font-weight: 680; }
 .support-filters .filters { justify-content: start; }
+#support-stage-help { margin: .5rem 0 0; color: var(--muted); font-size: .85rem; }
 .support-tags { margin: .3rem 0; }
 .support-tags span { border-radius: .2rem; padding: .08rem .38rem; background: #e9f4f1; color: #20524e; }
 .support-tracks { margin-top: .6rem; padding-inline-start: .7rem; border-inline-start: 2px solid #a4c7c2; }
