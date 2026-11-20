@@ -4,27 +4,10 @@ from unittest.mock import patch
 
 from ddgs.exceptions import DDGSException
 
-from collect import NOR_SHIPPING, merge_nor_shipping, nor_shipping
+from collect import NOR_SHIPPING, merge_exhibitions, nor_shipping, record
 
 
 class NorShippingTest(unittest.TestCase):
-    def test_merges_only_the_reviewed_edition_and_preserves_kotra_deadline(self):
-        official = {"id": "nor_shipping:2027", "event_start": "2027-06-07"}
-        notice = {"id": "gep:OVS000029059", "source": "gep", "title": "2027 노르웨이 오슬로 선박 전시회",
-                  "url": "https://www.gep.or.kr/gept/notice", "event_start": "2027-06-08",
-                  "deadline": "2026-11-20"}
-        records = {notice["id"]: notice}
-        merge_nor_shipping(records)
-        self.assertEqual(records, {notice["id"]: notice})
-
-        records[official["id"]] = official
-        merge_nor_shipping(records)
-        self.assertEqual(list(records), [official["id"]])
-        self.assertEqual(official["event_start"], "2027-06-07")
-        self.assertEqual(official["deadline"], "2026-11-20")
-        self.assertEqual(official["gep_notice"],
-                         {field: notice[field] for field in ("source", "title", "url")})
-
     def test_collects_only_facts_from_official_page(self):
         official_page = """
         <meta property="og:title" content="Nor-Shipping 2027">
@@ -65,3 +48,40 @@ class NorShippingTest(unittest.TestCase):
                 self.assertEqual(row["exhibition_end"], "2027-06-11")
                 self.assertEqual(row["visit_url"], NOR_SHIPPING + "the-exhibition/")
                 self.assertNotIn("exhibit_url", row)
+
+
+class ExhibitionMergeTest(unittest.TestCase):
+    def test_merges_new_matches_and_preserves_kotra_notices(self):
+        official = record("organizer", "2027", "Ocean-Tech 2027", "https://organizer.example/",
+                          "international", event_start="2027-06-07", event_end="2027-06-11",
+                          exhibition_start="2027-06-08", exhibition_end="2027-06-11")
+        first = record("gep", "1", "2027 해양 기술 전시회 [Ocean Tech]", "https://www.gep.or.kr/gept/1",
+                       "international", event_start="2027-06-08", event_end="2027-06-11", deadline="2027-01-08")
+        second = record("gep", "2", "Ocean–Tech 2027", "https://www.gep.or.kr/gept/2",
+                        "international", event_start="2027-06-08", event_end="2027-06-11", deadline="2027-01-15")
+        other_edition = {**second, "id": "gep:3", "title": "Ocean Tech 2028",
+                         "event_start": "2028-06-08", "event_end": "2028-06-11"}
+        unknown_dates = {**second, "id": "gep:4", "event_end": ""}
+        rows = {row["id"]: row for row in (official, first, second, other_edition, unknown_dates)}
+
+        merge_exhibitions(rows)
+
+        self.assertEqual(set(rows), {official["id"], other_edition["id"], unknown_dates["id"]})
+        self.assertEqual(official["event_start"], "2027-06-07")
+        self.assertEqual(official["gep_notices"],
+                         [{field: notice[field] for field in ("title", "url", "deadline")}
+                          for notice in (first, second)])
+
+    def test_keeps_ambiguous_matches(self):
+        fields = {"event_start": "2027-06-08", "event_end": "2027-06-11"}
+        first = record("org1", "a", "Ocean Tech 2027", "https://first.example/", "international", **fields)
+        second = record("org2", "b", "Ocean-Tech 2027", "https://second.example/", "international", **fields)
+        notice = record("gep", "1", "Ocean Tech 2027", "https://www.gep.or.kr/gept/1",
+                        "international", **fields)
+        rows = {row["id"]: row for row in (first, second, notice)}
+
+        merge_exhibitions(rows)
+
+        self.assertEqual(len(rows), 3)
+        self.assertNotIn("gep_notices", first)
+        self.assertNotIn("gep_notices", second)

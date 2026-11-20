@@ -59,8 +59,9 @@ function searchTerms(query) {
 }
 
 function matches(record, terms) {
+  const gepTitles = (record.gep_notices ?? []).map((notice) => notice.title);
   const subject = [record.title, record.place, record.topic, record.eligibility, data.sources[record.source],
-    record.gep_notice?.title, data.sources[record.gep_notice?.source], categories[record.category]]
+    ...gepTitles, gepTitles.length ? data.sources.gep : "", categories[record.category]]
     .filter(Boolean).join(" ");
   const compact = normalize(subject);
   return terms.every((group) => group.some((word) => {
@@ -84,8 +85,7 @@ function appendRecord(parent, entry) {
   if (entry.exhibition_start && entry.exhibition_end) addText(meta, "span", `전시장 운영 ${entry.exhibition_start} ~ ${entry.exhibition_end}`);
   if (entry.deadline) {
     const time = entry.deadline_time ? " " + entry.deadline_time + " KST" : "";
-    const deadlineLabel = entry.gep_notice ? "KOTRA 신청 마감" : isClosed(entry) ? "마감" : "신청 마감";
-    addText(meta, "span", `${deadlineLabel} ${entry.deadline}${time}`);
+    addText(meta, "span", `${isClosed(entry) ? "마감" : "신청 마감"} ${entry.deadline}${time}`);
   }
   if (entry.place) addText(meta, "span", entry.place);
   for (const [field, label] of [["visit_url", "참관 안내"], ["exhibit_url", "전시 참가 안내"]]) {
@@ -93,8 +93,15 @@ function appendRecord(parent, entry) {
       addText(meta, "a", label).href = entry[field];
     }
   }
-  if (entry.gep_notice?.url.startsWith("https://www.gep.or.kr/gept/")) {
-    addText(meta, "a", "KOTRA 전시 안내").href = entry.gep_notice.url;
+  for (const notice of entry.gep_notices ?? []) {
+    if (!notice.url.startsWith("https://www.gep.or.kr/gept/")) continue;
+    const reference = addText(item, "p", "", "meta");
+    const label = entry.gep_notices.length === 1 ? "KOTRA 전시 안내" : notice.title;
+    addText(reference, "a", label).href = notice.url;
+    if (notice.deadline) {
+      const time = notice.deadline_time ? " " + notice.deadline_time + " KST" : "";
+      addText(reference, "span", `KOTRA 신청 마감 ${notice.deadline}${time}`);
+    }
   }
   if (!meta.childElementCount) meta.remove();
   if (entry.eligibility && entry.eligibility_url?.startsWith("https://www.jcia.or.kr/")) {
@@ -112,10 +119,14 @@ function render() {
   const source = el("source").value;
   const results = data.records.filter((entry) =>
     (selected === "all" || entry.category === selected) &&
-    (!source || entry.source === source || entry.gep_notice?.source === source) && matches(entry, terms));
+    (!source || entry.source === source || (source === "gep" && entry.gep_notices?.length)) &&
+    matches(entry, terms));
+  const upcoming = (entry) => [entry, ...(entry.gep_notices ?? [])]
+    .filter((notice) => notice.deadline && !isClosed(notice))
+    .map((notice) => notice.deadline + (notice.deadline_time || "23:59"))
+    .sort()[0] ?? "9999";
   results.sort((a, b) => {
     if (el("sort").value === "deadline") {
-      const upcoming = (entry) => entry.deadline && !isClosed(entry) ? entry.deadline + (entry.deadline_time || "23:59") : "9999";
       const order = upcoming(a).localeCompare(upcoming(b));
       if (order) return order;
     }
@@ -150,7 +161,7 @@ el("source").addEventListener("change", reset);
 el("sort").addEventListener("change", reset);
 el("more").addEventListener("click", () => { limit += 20; render(); });
 
-fetch("./data.json")
+fetch("./data.json", {cache: "no-cache"})
   .then((response) => {
     if (!response.ok) throw new Error("Data unavailable");
     return response.json();

@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
@@ -288,16 +289,44 @@ def nor_shipping(get):
                    place=place, **participation)]
 
 
-def merge_nor_shipping(records):
-    # shortcut: one verified cross-reference; extend when other events have confirmed matches.
-    official = records.get("nor_shipping:2027")
-    gep_notice = records.get("gep:OVS000029059")
-    if official is None or gep_notice is None:
-        return
-    official["gep_notice"] = {field: gep_notice[field] for field in ("source", "title", "url")}
-    if gep_notice.get("deadline"):
-        official["deadline"] = gep_notice["deadline"]
-    del records[gep_notice["id"]]
+def exhibition_key(title, start, end):
+    if not start or not end or start > end:
+        return None
+    title = unicodedata.normalize("NFKC", title).casefold()
+    title = re.sub(rf"(?<!\d){start[:4]}(?!\d)", "", title)
+    name = "".join(character for character in title if character.isalnum())
+    return (name, start, end) if name else None
+
+
+def merge_exhibitions(records):
+    organizers = {}
+    gep_notices = []
+    for row in records.values():
+        if row["category"] != "international":
+            continue
+        if row["source"] == "gep":
+            gep_notices.append(row)
+            continue
+        key = exhibition_key(row["title"], row.get("exhibition_start") or row.get("event_start"),
+                             row.get("exhibition_end") or row.get("event_end"))
+        if key:
+            organizers.setdefault(key, []).append(row)
+
+    for notice in gep_notices:
+        title = unicodedata.normalize("NFKC", notice["title"]).strip()
+        # shortcut: use exact dates and a shared name; add explicit aliases for verified translations.
+        alias = re.search(r"\[([^\[\]]+)\]$|\(([^()]+)\)$", title)
+        titles = [title, alias[1] or alias[2]] if alias else [title]
+        matches = {}
+        for name in titles:
+            key = exhibition_key(name, notice.get("event_start"), notice.get("event_end"))
+            matches.update((row["id"], row) for row in organizers.get(key, ()))
+        if len(matches) == 1:
+            official, = matches.values()
+            official.setdefault("gep_notices", []).append({
+                field: notice[field] for field in ("title", "url", "deadline", "deadline_time") if field in notice
+            })
+            del records[notice["id"]]
 
 
 def naver_headers():
@@ -453,7 +482,7 @@ def build(samples):
     if failed:
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
-    merge_nor_shipping(records)
+    merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     for name in ("index.html", "portal.css", "portal.js"):
