@@ -477,7 +477,7 @@ function reset() {
 fillCategories();
 el("query").addEventListener("input", () => {
   const query = el("query").value.trim() || "해양수산 AI";
-  for (const link of document.querySelectorAll(".naver-search a")) {
+  for (const link of [el("naver-news"), el("naver-web")]) {
     const search = new URL(link.href);
     search.searchParams.set("query", query);
     link.href = search.href;

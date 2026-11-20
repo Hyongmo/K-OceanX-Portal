@@ -47,8 +47,8 @@ a { color: inherit; }
 .intro { color: white; background: linear-gradient(112deg, var(--navy) 20%, #174c59 100%); padding: clamp(2rem, 5vw, 4rem) 0; }
 .intro h1 { font-size: clamp(2rem, 5vw, 3.65rem); line-height: 1.17; letter-spacing: -.06em; margin: .3rem 0 .75rem; }
 .intro p { margin: 0 0 1.3rem; color: #e1eef0; }
-.intro .naver-search { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; margin: .7rem 0 0; font-size: .9rem; }
-.naver-search a { text-underline-offset: .2em; }
+.intro .intro-links { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; margin: .7rem 0 0; font-size: .9rem; }
+.intro-links a { text-underline-offset: .2em; }
 .intro .eyebrow { margin: 0; color: #86e5d0; font-size: .9rem; font-weight: 700; letter-spacing: .05em; }
 input, select, button { font: inherit; }
 #query { width: min(100%, 36rem); background: white; color: #162634; border: 1px solid #b8d6d6; border-radius: .55rem; padding: .8rem 1rem; }
