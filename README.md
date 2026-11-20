@@ -18,9 +18,9 @@ python -m http.server 8000 --bind 127.0.0.1 --directory dist
 
 1. Actions에서 **Collect and publish portal**을 선택하고 **Run workflow**를 누릅니다. 기본값은 실시간 수집 시험이며 **github-pages** 실행 산출물로 결과를 확인할 수 있습니다.
 2. Pages의 Source를 GitHub Actions로 설정한 뒤, 배포할 때는 **Run workflow**에서 `publish`를 선택합니다. 모든 수집과 배포는 수동 실행으로 시작합니다.
-3. 네이버 API 연결을 시험할 때는 `check_naver`를 선택합니다. 저장소의 `NAVER_CLIENT_ID`와 `NAVER_CLIENT_SECRET`로 실제 요청을 보내고 질의별 응답 건수를 기록합니다.
+3. 네이버 API 연결을 시험할 때는 `check_naver`를 선택합니다. 저장소의 `NAVER_CLIENT_ID`와 `NAVER_CLIENT_SECRET`로 뉴스·웹문서 검색 API에 실제 요청을 보내고 질의별 응답 건수를 기록합니다.
 
-포털의 네이버 뉴스 링크는 입력한 검색어를 네이버 뉴스 검색으로 연결합니다. [네이버 검색 API 특약조건](https://developers.naver.com/products/terms/)에 따라 API 결과는 공개용 JSON이나 Actions 산출물에 포함하지 않습니다.
+포털의 네이버 뉴스·웹문서 링크는 입력한 검색어를 각 네이버 검색 화면으로 연결합니다. 웹문서 검색에서 공식 공고·행사 페이지를 찾으면 신청 조건과 마감은 원출처에서 확인합니다. [네이버 검색 API 특약조건](https://developers.naver.com/products/terms/)에 따라 API 결과는 공개용 JSON이나 Actions 산출물에 포함하지 않습니다.
 
 시험판에는 KIMST, IRIS, NIPA, KMI, KOTRA 해외시장뉴스, GEP, K-Startup, 부산국제수산엑스포가 연결되어 있습니다. 수집은 현재 목록의 첫 페이지와 일부 행사에 한정합니다. 수집 오류가 발생하면 실행을 실패 처리해 불완전한 데이터로 사이트를 교체하는 일을 막습니다.
 

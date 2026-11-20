@@ -113,9 +113,12 @@ function reset() {
 
 fillCategories();
 el("query").addEventListener("input", () => {
-  const naverSearch = new URL(el("naver-news").href);
-  naverSearch.searchParams.set("query", el("query").value.trim() || "해양수산 AI");
-  el("naver-news").href = naverSearch.href;
+  const query = el("query").value.trim() || "해양수산 AI";
+  for (const link of document.querySelectorAll(".naver-search a")) {
+    const search = new URL(link.href);
+    search.searchParams.set("query", query);
+    link.href = search.href;
+  }
   reset();
 });
 el("source").addEventListener("change", reset);

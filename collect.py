@@ -20,6 +20,14 @@ DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
 MARINE = re.compile(r"해양|해운|항만|선박|조선소|조선업|조선해양|조선 산업|수산|양식장|스마트\s*양식|해상|북극항로|항만물류|maritime|nor.shipping|ocean|aquaculture", re.I)
 AI = re.compile(r"\bAI\b|인공지능|데이터|디지털|로봇|자율|스마트", re.I)
 NEWS_TERMS = ("스마트항만", "스마트양식", "자율운항선박", "해양 인공지능", "해상 공급망")
+WEB_TERMS = (
+    "스마트양식 실증 공고",
+    "해양수산 AI 데이터 R&D 공고",
+    "해양 로봇 전시회 참가 모집",
+    "KIMST 해양수산 AI 지원사업 공고",
+    "KOTRA 선박 전시회 한국관 참가기업 모집",
+    "스마트양식 지원 공고 site:bizinfo.go.kr",
+)
 
 
 def iso(value):
@@ -208,20 +216,25 @@ def check_naver(get):
     if not client_id or not client_secret:
         raise SystemExit("Missing Naver Actions Secrets")
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
-    total = 0
-    for term in NEWS_TERMS:
-        url = params("https://openapi.naver.com/v1/search/news.json", query=term, display=20, sort="date")
-        items = json.loads(get("naver", url, headers))["items"]
-        if not isinstance(items, list) or any(
-            not isinstance(item, dict) or not item.get("title") or not item.get("link")
-            for item in items
-        ):
-            raise ValueError("Naver API returned an unexpected news response")
-        total += len(items)
-        print(f"{term}: {len(items)} news results")
-    if total == 0:
-        raise SystemExit("Naver API returned zero news results")
-    print(f"Naver API verified: {total} news results across {len(NEWS_TERMS)} queries")
+    searches = (
+        ("news", NEWS_TERMS, {"display": 20, "sort": "date"}),
+        ("webkr", WEB_TERMS, {"display": 10, "start": 1}),
+    )
+    for endpoint, terms, options in searches:
+        total = 0
+        for term in terms:
+            url = params(f"https://openapi.naver.com/v1/search/{endpoint}.json", query=term, **options)
+            items = json.loads(get("naver", url, headers))["items"]
+            if not isinstance(items, list) or any(
+                not isinstance(item, dict) or not item.get("title") or not item.get("link")
+                for item in items
+            ):
+                raise ValueError(f"Naver {endpoint} returned an unexpected response")
+            total += len(items)
+            print(f"{endpoint} {term}: {len(items)} results")
+        if total == 0:
+            raise SystemExit(f"Naver {endpoint} returned zero results")
+        print(f"Naver {endpoint} API verified: {total} results across {len(terms)} queries")
 
 
 SOURCES = {
@@ -274,7 +287,7 @@ def build(samples):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=Path, help="Replay saved HTTP responses from the source checks")
-    parser.add_argument("--check-naver", action="store_true", help="Check live Naver News response counts")
+    parser.add_argument("--check-naver", action="store_true", help="Check live Naver News and Web response counts")
     args = parser.parse_args()
     if args.check_naver:
         check_naver(reader(None))
