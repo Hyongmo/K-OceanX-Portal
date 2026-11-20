@@ -14,6 +14,32 @@ const planningActions = {
   planning: "기획비 지원 항목과 주관기관 자격을 확인하세요.",
   joint: "필요한 대학·연구기관과 컨소시엄 조건을 확인하세요.",
 };
+const briefingNotes = {
+  "nipa:17006": {
+    title: "첨단 GPU 베타서비스 참여자를 모집합니다",
+    lead: "과기정통부와 NIPA가 첨단 GPU 자원의 배분·운영을 시험합니다. AI 모델 개발에 컴퓨팅 자원이 필요한 팀은 이용 조건과 신청 자격을 확인하세요.",
+  },
+  "keit_planning:001026": {
+    title: "제조 현장의 작업 노하우를 AI로 활용할 기술 수요를 받습니다",
+    lead: "KEIT가 2027년 제조 AX 과제 기획에 반영할 아이디어를 받습니다. 작업자의 노하우를 데이터로 활용하려는 조선·기자재 기업은 조사 분야와 제안 양식을 살펴보세요.",
+  },
+  "kstartup:179815": {
+    title: "KDB NextONE 부산, 7년 이내 창업법인 모집",
+    lead: "혁신성장산업에 해당하는 창업 7년 이내 법인이 신청할 수 있습니다. 부산 해양, 울산 AI·산업 AX, 경남 조선해양은 공고에 명시된 지역별 우대 분야입니다.",
+  },
+  "kstartup:179832": {
+    title: "기술 수요기업과 1:1로 만날 스타트업을 찾습니다",
+    lead: "대구창조경제혁신센터가 기술소개자료를 수요기업에 전달하고, 매칭된 기업의 1:1 미팅을 연결합니다. 지원 전에 수요 분야와 참여기업 목록을 확인하세요.",
+  },
+  "kstartup:179824": {
+    title: "송파ICT청년창업지원센터, 2027년 입주기업 모집",
+    lead: "만 39세 이하 ICT·AI·빅데이터 분야 예비창업자와 창업 3년 이하 기업이 대상입니다. 사무공간과 멘토링을 제공하며 입주 후 사업장 등록 또는 이전 조건이 있습니다.",
+  },
+  "kotra:245160": {
+    title: "일본 조선업 투자 확대, 기자재 기업이 살펴볼 변화",
+    lead: "KOTRA가 일본 조선업의 투자 움직임을 전했습니다. 일본 진출을 검토하는 조선·해양 기자재 기업은 설비 투자와 공급망 변화를 살펴보세요.",
+  },
+};
 const synonyms = [
   ["스마트항만", "스마트 항만", "항만자동화", "항만 자동화"],
   ["스마트양식", "스마트 양식", "지능형양식", "양식 자동화"],
@@ -29,6 +55,8 @@ const nowInSeoul = new Intl.DateTimeFormat("sv-SE", {
 }).format(new Date());
 const isClosed = (entry) => entry.deadline < today ||
   (entry.deadline === today && entry.deadline_time && entry.deadline_time <= nowInSeoul);
+const briefingDate = new Intl.DateTimeFormat("ko-KR", {month: "long", day: "numeric", timeZone: "UTC"});
+const formatBriefDate = (value) => briefingDate.format(new Date(value + "T00:00:00Z"));
 const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 const blank = () => ({ records: [], sources: {} });
 let data = blank();
@@ -79,6 +107,80 @@ function matches(record, terms) {
     if (word !== "ai") return compact.includes(word);
     return /(^|[^a-z0-9])ai(?=$|[^a-z0-9])/i.test(subject.normalize("NFKC"));
   }));
+}
+
+function selectBriefing(entries) {
+  const daysFromToday = (value) => (Date.parse(value) - Date.parse(today)) / 86400000;
+  const relevance = (entry) => {
+    if (briefingNotes[entry.id]) return 3;
+    const subject = [entry.title, entry.topic].filter(Boolean).join(" ");
+    if (/해양|해운|해상|항만|선박|조선|수산|양식|maritime|ocean/i.test(subject)) return 2;
+    return /(?<![a-z0-9])AI(?![a-z0-9])|인공지능|학습용\s*데이터|GPU|제조\s*AX/i.test(subject) ? 1 : 0;
+  };
+  const candidates = entries.filter((entry) =>
+    relevance(entry) && !/\[\s*(?:접수\s*마감|마감|취소)\s*\]|잠정\s*중단|공고\s*취소/.test(entry.title)
+  );
+  const deadlineOrder = (a, b) => (a.deadline + (a.deadline_time || "23:59"))
+    .localeCompare(b.deadline + (b.deadline_time || "23:59"));
+  const deadlines = candidates
+    .filter((entry) => entry.planning_stage !== "preview" && (!entry.opens || entry.opens <= today))
+    .map((entry) => ({
+      entry,
+      deadline: [entry, ...(entry.gep_notices ?? [])]
+        .filter((item) => item.deadline && !isClosed(item) && daysFromToday(item.deadline) <= 7)
+        .sort(deadlineOrder)[0],
+    }))
+    .filter(({deadline}) => deadline)
+    .sort((a, b) => relevance(b.entry) - relevance(a.entry) || deadlineOrder(a.deadline, b.deadline))
+    .slice(0, 3).sort((a, b) => deadlineOrder(a.deadline, b.deadline));
+  const featured = new Set(deadlines.map(({entry}) => entry.id));
+  const latest = candidates.filter((entry) => !featured.has(entry.id) &&
+    entry.published && daysFromToday(entry.published) >= -6 && daysFromToday(entry.published) <= 0 &&
+    (!entry.deadline || !isClosed(entry)))
+    .sort((a, b) => b.published.localeCompare(a.published) || relevance(b) - relevance(a))
+    .slice(0, 3);
+  return {deadlines, latest};
+}
+
+function appendBrief(parent, entry, deadline) {
+  const source = deadline && deadline !== entry ? data.sources.gep : entry.publisher || data.sources[entry.source];
+  const url = new URL(deadline?.url || entry.url);
+  if (url.protocol !== "https:") return;
+  const note = briefingNotes[entry.id];
+  const story = document.createElement("li");
+  const article = document.createElement("article");
+  story.append(article);
+  const meta = addText(article, "p", "", "meta");
+  addText(meta, "span", source);
+  if (deadline) {
+    const date = deadline.deadline === today ? "오늘" : formatBriefDate(deadline.deadline);
+    const time = deadline.deadline_time ? ` ${deadline.deadline_time} KST` : "";
+    addText(meta, "span", `${date}${time} 마감`, "briefing-when");
+  } else {
+    addText(meta, "span", formatBriefDate(entry.published));
+    if (entry.deadline) addText(meta, "span", `${formatBriefDate(entry.deadline)} 마감`);
+  }
+  addText(addText(article, "h4", ""), "a", note?.title || entry.title).href = url.href;
+  const lead = note?.lead || entry.topic || entry.eligibility || planningActions[entry.planning_stage];
+  if (lead) addText(article, "p", lead, "briefing-lead");
+  const linkLabel = entry.category === "industry" ? "출처에서 기사 읽기" :
+    deadline && !deadline.deadline_time ? "참여 조건·마감 시각 확인" : "공식 원문 보기";
+  addText(article, "a", linkLabel, "briefing-link").href = url.href;
+  parent.append(story);
+}
+
+function renderBriefing(entries) {
+  const {deadlines, latest} = selectBriefing(entries);
+  const deadlineList = document.createDocumentFragment();
+  deadlines.forEach(({entry, deadline}) => appendBrief(deadlineList, entry, deadline));
+  el("briefing-deadline-list").replaceChildren(deadlineList);
+  const latestList = document.createDocumentFragment();
+  latest.forEach((entry) => appendBrief(latestList, entry));
+  el("briefing-latest-list").replaceChildren(latestList);
+  el("briefing-deadlines").hidden = deadlines.length === 0;
+  el("briefing-latest").hidden = latest.length === 0;
+  el("briefing").hidden = deadlines.length + latest.length === 0;
+  return new Set([...deadlines.map(({entry}) => entry.id), ...latest.map((entry) => entry.id)]);
 }
 
 function appendRecord(parent, entry, featured = false) {
@@ -138,6 +240,7 @@ function render() {
   const terms = searchTerms(el("query").value.trim());
   const source = el("source").value;
   const stage = selected === "rnd" ? el("planning-stage").value : "";
+  const defaultView = !terms.length && !source && !stage && el("sort").value === "latest";
   el("planning-stage-filter").hidden = selected !== "rnd";
   const results = data.records.filter((entry) =>
     (selected === "all" || entry.category === selected) &&
@@ -159,7 +262,8 @@ function render() {
   el("results-title").textContent = selected === "all" ? "통합 결과" : categories[selected];
   el("summary").textContent = results.length ? `검색 결과 ${results.length.toLocaleString("ko-KR")}건` :
     selected === "patent" ? "특허 정보는 연계 준비 중입니다." : "조건에 맞는 정보가 없습니다.";
-  const picks = selected === "rnd" && !terms.length && !source && !stage && el("sort").value === "latest" ?
+  const briefingIds = renderBriefing(selected === "all" && defaultView ? results : []);
+  const picks = selected === "rnd" && defaultView ?
     results.filter((entry) => planningActions[entry.planning_stage] &&
       entry.opens && entry.opens <= today && entry.deadline && !isClosed(entry))
       .sort((a, b) => upcoming(a).localeCompare(upcoming(b))).slice(0, 3) : [];
@@ -167,7 +271,7 @@ function render() {
   picks.forEach((entry) => appendRecord(featured, entry, true));
   el("rnd-picks").replaceChildren(featured);
   el("rnd-featured").hidden = !picks.length;
-  const remaining = results.filter((entry) => !picks.includes(entry));
+  const remaining = results.filter((entry) => !picks.includes(entry) && !briefingIds.has(entry.id));
   const list = document.createDocumentFragment();
   remaining.slice(0, limit).forEach((entry) => appendRecord(list, entry));
   el("results").replaceChildren(list);
@@ -213,6 +317,10 @@ fetch(dataUrl, {cache: "no-cache"})
       timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short",
     }).format(new Date(data.updated_at));
     el("updated").textContent = data.sample ? "저장된 응답으로 만든 시험 데이터" : `마지막 갱신 ${timestamp}`;
+    const dataDate = new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "Asia/Seoul", month: "long", day: "numeric",
+    }).format(new Date(data.updated_at));
+    el("briefing-date").textContent = `${dataDate} 수집 기준`;
     ready = true;
     render();
   })

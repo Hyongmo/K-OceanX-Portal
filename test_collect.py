@@ -5,11 +5,22 @@ from unittest.mock import patch
 from ddgs.exceptions import DDGSException
 
 from collect import (
-    NOR_SHIPPING, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record,
+    NOR_SHIPPING, announcements, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record,
 )
 
 
 class PlanningTest(unittest.TestCase):
+    def test_nipa_uses_the_published_deadline_time(self):
+        def get(name, url):
+            return ('<table><tr><td><a href="/home/2-2/17006">GPU 모집</a>'
+                    '신청기간 : 2026-11-19 11:00 ~ 2026-11-24 15:00</td><td>2026-11-19</td>'
+                    '</tr></table>').encode()
+
+        entry, = announcements(get, "nipa", "https://www.nipa.kr/home/2-2", "tr a", None, "support")
+        self.assertEqual(entry["opens"], "2026-11-19")
+        self.assertEqual(entry["deadline"], "2026-11-24")
+        self.assertEqual(entry["deadline_time"], "15:00")
+
     def test_bistep_falls_back_to_verified_partner_publication(self):
         def get(name, url):
             if "btis.bistep.re.kr" in url:

@@ -53,6 +53,20 @@ a { color: inherit; }
 input, select, button { font: inherit; }
 #query { width: min(100%, 36rem); background: white; color: #162634; border: 1px solid #b8d6d6; border-radius: .55rem; padding: .8rem 1rem; }
 .catalog { padding: 1.4rem 0 2.8rem; }
+#briefing { margin: 0 0 1.75rem; }
+.briefing-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem 1rem; }
+#briefing-title { font-size: clamp(1.65rem, 3vw, 2rem); }
+#briefing-date { margin: 0; font-size: .88rem; color: var(--muted); }
+.briefing-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 25rem), 1fr)); gap: .8rem 1.5rem; margin-top: .85rem; }
+.briefing-columns section > h3 { margin: 0; padding-top: .45rem; border-top: 2px solid var(--teal); font-size: 1rem; }
+.briefing-columns ul { list-style: none; margin: 0; padding: 0; }
+.briefing-columns li { padding: .85rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.briefing-columns h4 { margin: .15rem 0 .25rem; font-size: 1.12rem; font-weight: 720; line-height: 1.36; }
+.briefing-columns h4 a { text-decoration: none; }
+.briefing-columns h4 a:hover { text-decoration: underline; }
+.briefing-lead { margin: .3rem 0; color: #334b5b; font-size: .92rem; }
+.briefing-link { color: var(--teal); font-size: .87rem; text-underline-offset: .2em; }
+.briefing-when { font-weight: 680; color: var(--teal); }
 nav { display: flex; flex-wrap: wrap; gap: .45rem; padding-bottom: 1.45rem; border-bottom: 1px solid var(--line); }
 button { border: 1px solid var(--line); border-radius: .4rem; padding: .55rem .8rem; background: white; color: inherit; cursor: pointer; }
 button[aria-pressed="true"] { background: var(--teal); border-color: var(--teal); color: white; }

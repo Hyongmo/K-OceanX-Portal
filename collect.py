@@ -401,6 +401,7 @@ def announcements(get, source, url, selector, key, category):
         cells = anchor.find_parent("tr").find_all("td", recursive=False)
         href = anchor["href"]
         title = anchor.get_text(" ", strip=True)
+        schedule = {}
         if source == "kimst_notice":
             if re.search(r"채용|임원|인사발령|연구윤리|입찰|위탁정산", title):
                 continue
@@ -415,10 +416,15 @@ def announcements(get, source, url, selector, key, category):
                 anchor.find_parent("td").get_text(" ", strip=True).partition("신청기간")[2])
             dates = re.findall(DATE, period)
             deadline = iso(dates[-1]) if len(dates) >= 2 else ""
+            if source == "nipa":
+                parsed = planning_period(period)
+                if parsed.get("deadline") == deadline:
+                    schedule = {"opens": parsed["opens"], "deadline_time": parsed["deadline_time"]}
         identifier = parse_qs(urlsplit(href).query)[key][0] if key else href.rsplit("/", 1)[-1]
         stage = planning_type(title) or ("application" if source == "kimst_rnd" else "")
         rows.append(record(source, identifier, title, urljoin(url, href), kind,
-                           published=published, deadline=deadline, planning_stage=stage if kind == "rnd" else ""))
+                           published=published, deadline=deadline, planning_stage=stage if kind == "rnd" else "",
+                           **schedule))
     return require(rows)
 
 
@@ -495,7 +501,7 @@ def kstartup(get):
         box = a.find_parent("li")
         title = a.select_one(".tit").get_text(" ", strip=True)
         fields = {}
-        for label, field in (("등록일자", "published"), ("마감일자", "deadline")):
+        for label, field in (("등록일자", "published"), ("시작일자", "opens"), ("마감일자", "deadline")):
             match = re.search(rf"{label}\s+({DATE})", box.get_text(" ", strip=True))
             if match:
                 fields[field] = iso(match[1])

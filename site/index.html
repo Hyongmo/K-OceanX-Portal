@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="해양수산 AI·데이터 기업을 위한 연구개발, 산업동향, 행사 및 기업지원 정보.">
   <title>K-OceanX 기업성장 정보포털</title>
-  <link rel="stylesheet" href="./portal.css?v=9">
+  <link rel="stylesheet" href="./portal.css?v=10">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -38,6 +38,22 @@
       </div>
     </section>
     <section class="wrap catalog" aria-labelledby="results-title">
+      <section id="briefing" aria-labelledby="briefing-title" hidden>
+        <div class="briefing-header">
+          <h2 id="briefing-title">기업지원 브리핑</h2>
+          <p id="briefing-date"></p>
+        </div>
+        <div class="briefing-columns">
+          <section id="briefing-deadlines" aria-labelledby="briefing-deadlines-title" hidden>
+            <h3 id="briefing-deadlines-title">마감 임박</h3>
+            <ul id="briefing-deadline-list"></ul>
+          </section>
+          <section id="briefing-latest" aria-labelledby="briefing-latest-title" hidden>
+            <h3 id="briefing-latest-title">새로 올라온 소식</h3>
+            <ul id="briefing-latest-list"></ul>
+          </section>
+        </div>
+      </section>
       <nav id="categories" aria-label="정보 영역"></nav>
       <section id="rnd-featured" aria-labelledby="rnd-featured-title" hidden>
         <h2 id="rnd-featured-title">지금 검토할 R&D 기회</h2>
