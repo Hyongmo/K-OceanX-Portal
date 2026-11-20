@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="해양수산 AI·데이터 기업을 위한 연구개발, 산업동향, 행사 및 기업지원 정보.">
   <title>K-OceanX 기업성장 정보포털</title>
-  <link rel="stylesheet" href="./portal.css?v=8">
+  <link rel="stylesheet" href="./portal.css?v=9">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -39,9 +39,14 @@
     </section>
     <section class="wrap catalog" aria-labelledby="results-title">
       <nav id="categories" aria-label="정보 영역"></nav>
+      <section id="rnd-featured" aria-labelledby="rnd-featured-title" hidden>
+        <h2 id="rnd-featured-title">지금 검토할 R&D 기회</h2>
+        <ul id="rnd-picks"></ul>
+      </section>
       <div class="toolbar">
         <div><h2 id="results-title">통합 결과</h2><p id="summary" role="status">정보를 불러오는 중입니다.</p></div>
         <div class="filters">
+          <label id="planning-stage-filter" hidden>참여 유형<select id="planning-stage"><option value="">전체</option></select></label>
           <label>정보원<select id="source"><option value="">전체</option></select></label>
           <label>정렬<select id="sort"><option value="latest">최신순</option><option value="deadline">마감일순</option></select></label>
         </div>

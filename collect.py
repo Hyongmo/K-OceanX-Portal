@@ -41,6 +41,8 @@ JCIA_QUERY = "AI어장 현장실증 지원 모집 site:jcia.or.kr"
 JCIA_POST = re.compile(r"/cf/Board/([0-9]{1,8})/detailView\.do")
 JCIA_REVIEWED = ("9830", "9759")
 NOR_SHIPPING = "https://nor-shipping.com/"
+PLANNING_TOPIC = re.compile(r"해양|해운|항만|선박|조선|수산|양식|물류|제조\s*AX|피지컬\s*AI|인공지능|\bAI\b|학습용\s*데이터", re.I)
+PLANNING_HTTP = (OSError, ValueError, subprocess.SubprocessError)
 
 
 def iso(value):
@@ -70,10 +72,12 @@ def reader(samples):
     def get(name, url, headers=None):
         if samples:
             return (samples / f"{name}.body").read_bytes()
-        if name in ("kimst_rnd", "kimst_notice", "jcia"):
+        if name in ("kimst_rnd", "kimst_notice", "jcia", "tp_planning", "biz_planning",
+                    "bistep_planning", "nia_planning", "nipa_demand", "keit_planning"):
             # These publishers work with curl on the development host.
             raw = subprocess.check_output(["curl", "-fsSL", "--max-time", "20", "--max-filesize",
-                                           "8000000", "--proto", "=https", url])
+                                           "8000000", "--proto", "=https",
+                                           "--user-agent", "K-OceanX pilot/0.1", url])
         else:
             request = Request(url, headers={"User-Agent": "K-OceanX pilot/0.1"})
             for key, value in (headers or {}).items():
@@ -100,6 +104,255 @@ def require(rows):
     return rows
 
 
+def planning_type(title):
+    for kind, pattern in (
+        ("preview", r"예비공고|공모예고"),
+        ("opinion", r"사전\s*공시|인터넷\s*공시|의견\s*수렴|공청회"),
+        ("demand", r"수요\s*조사|수요\s*제안|품목\s*수요"),
+        ("joint", r"공동\s*(?:R&D\s*)?(?:과제\s*)?기획|과제\s*연구회|워킹\s*그룹"),
+        ("planning", r"기획\s*[·ㆍ‧]?\s*(?:지원|유치|연구)|연구\s*기획\s*사업"),
+    ):
+        if re.search(pattern, title):
+            return kind
+    return ""
+
+
+def planning_period(text):
+    parts = re.split(r"[~～∼]", text, maxsplit=1)
+    date_pattern = r"(?:(20\d{2})\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})(?!\d)"
+    start = re.search(date_pattern, parts[0])
+    end = re.search(date_pattern, parts[1]) if len(parts) == 2 else None
+    if not start or not end or not start[1]:
+        return {}
+    year, month, day = map(int, start.groups())
+    first = iso(f"{year}-{month:02}-{day:02}")
+    last_month, last_day = int(end[2]), int(end[3])
+    last_year = int(end[1]) if end[1] else year + (last_month < month)
+    last = iso(f"{last_year}-{last_month:02}-{last_day:02}")
+    if not first or not last or first > last:
+        return {}
+    clock = re.search(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", parts[1])
+    return {"opens": first, "deadline": last, "deadline_time": clock[0] if clock else ""}
+
+
+def planning_fields(title, period):
+    kind = planning_type(title)
+    return {"planning_stage": kind, **(planning_period(period) if kind != "preview" else {})}
+
+
+def regional_planning(get):
+    url = "https://technopark.or.kr/www/linkBoard/list.do?mid=1012&type=P"
+    candidates = []
+    try:
+        doc = page(get, "tp_planning", url)
+        candidates = require(doc.select('td .view a[onclick^="updateRdcnt"]'))
+    except PLANNING_HTTP as error:
+        print(f"TP notice index unavailable: {type(error).__name__}", file=sys.stderr)
+    rows = []
+    # shortcut: approved direct parsers and reviewed government reposts while regional formats vary.
+    for link in candidates:
+        title = link.get_text(" ", strip=True)
+        href = urlsplit(link["href"])
+        identifier = parse_qs(href.query).get("nttId", [""])[0]
+        if not planning_type(title) or href.scheme != "https" or href.netloc != "dgtp.or.kr" or not identifier.isdigit():
+            continue
+        official = params("https://dgtp.or.kr/bbs/BoardControllView.do",
+                          bbsId="BBSMSTR_000000000003", nttId=identifier)
+        try:
+            detail = page(get, "tp_planning", official)
+        except PLANNING_HTTP as error:
+            print(f"Daegu TP candidate unavailable: {type(error).__name__}", file=sys.stderr)
+            continue
+        fields = {h.get_text(" ", strip=True): h.find_next_sibling("td").get_text(" ", strip=True)
+                  for h in detail.select("th") if h.find_next_sibling("td")}
+        if fields.get("제목") == title and PLANNING_TOPIC.search(title):
+            rows.append(record("tp_planning", "dgtp-" + identifier, title, official, "rnd",
+                               place="대구", publisher="대구테크노파크", published=iso(fields.get("작성일")),
+                               **planning_fields(title, fields.get("접수기간", ""))))
+
+    registry = dict.fromkeys(("000000000126006", "000000000123085", "000000000120103", "000000000120819"))
+    try:
+        listing = page(get, "biz_planning", "https://www.bizinfo.go.kr/sii/siia/selectSIIA200View.do")
+        for a in listing.select('a[href*="selectSIIA200Detail.do"][href*="pblancId="]'):
+            if not planning_type(a.get_text(" ", strip=True)) or "테크노파크" not in a.find_parent("tr").get_text(" ", strip=True):
+                continue
+            key = re.search(r"[?&]pblancId=PBLN_(\d+)", a["href"])
+            if key:
+                registry[key[1]] = None
+    except PLANNING_HTTP as error:
+        print(f"Bizinfo listing unavailable: {type(error).__name__}", file=sys.stderr)
+    for key in registry:
+        official = params("https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do", pblancId=f"PBLN_{key}")
+        try:
+            detail = page(get, "biz_planning", official)
+        except PLANNING_HTTP as error:
+            print(f"Regional notice unavailable: {type(error).__name__}", file=sys.stderr)
+            continue
+        heading = detail.select_one("h2")
+        fields = {label.get_text(" ", strip=True): label.find_next_sibling("div", class_="txt")
+                  for label in detail.select(".s_title")}
+        if not heading or not all(fields.get(name) for name in ("사업수행기관", "신청기간", "사업개요")):
+            continue
+        title = heading.get_text(" ", strip=True)
+        publisher = fields["사업수행기관"].get_text(" ", strip=True)
+        overview = fields["사업개요"].get_text("\n", strip=True)
+        if not planning_type(title) or "테크노파크" not in publisher:
+            continue
+        source_link = detail.select_one("a#barogagi[href]")
+        if source_link:
+            source_url = urlsplit(source_link["href"])
+            source_key = parse_qs(source_url.query).get("nttId", [""])[0]
+            if source_url.hostname == "dgtp.or.kr" and any(row["id"] == f"tp_planning:dgtp-{source_key}" for row in rows):
+                continue
+        eligibility = re.search(r"☞\s*([^\n]{1,240})", overview)
+        rows.append(record("tp_planning", key, title, official, "rnd", publisher=publisher,
+                           place=publisher.replace("테크노파크", ""), eligibility=eligibility[1] if eligibility else "",
+                           **planning_fields(title, fields["신청기간"].get_text(" ", strip=True))))
+    return require(rows)
+
+
+def bistep_planning(get):
+    url = "https://www.bistep.re.kr/kor/CMS/Board/Board.do"
+    doc = page(get, "bistep_planning", params(url, mCode="MN022"))
+    links = require(doc.select('.subject a[href*="board_seq="]'))
+    rows = []
+    for a in [link for link in links if re.search(r"기획|수요", link.get_text(" ", strip=True))][:6]:
+        key = parse_qs(urlsplit(a["href"]).query).get("board_seq", [""])[0]
+        if not key.isdecimal():
+            continue
+        detail_url = params(url, mCode="MN022", mode="view", mgr_seq=33, board_seq=key)
+        try:
+            detail = page(get, "bistep_planning", detail_url)
+        except PLANNING_HTTP as error:
+            print(f"BISTEP detail unavailable: {type(error).__name__}", file=sys.stderr)
+            continue
+        body = detail.select_one("#boardContents")
+        heading = detail.select_one(".bdViewTit .stit")
+        if not body or not heading:
+            continue
+        title = heading.get_text(" ", strip=True)
+        if not planning_type(title) or not PLANNING_TOPIC.search(" ".join((title, body.get_text(" ", strip=True)))):
+            continue
+        paragraphs = [p.get_text(" ", strip=True) for p in body.select("p")]
+        eligibility = next((paragraphs[i + 1].lstrip("-ㅇ ") for i, p in enumerate(paragraphs[:-1])
+                            if re.fullmatch(r"(?:[가-하]\.\s*)?(?:제안\s*자격|신청\s*자격|지원\s*대상)", p)), "")
+        if not eligibility:
+            audience = re.search(r"부산\s+(?:역내외|소재)[^,.]{2,45}?(?=을 대상으로|를 대상으로)",
+                                 body.get_text(" ", strip=True))
+            eligibility = audience[0] if audience else ""
+        period = detail.select_one(".bdViewWinfo .txt")
+        published = detail.select_one(".viewTitWinfo .date")
+        rows.append(record("bistep_planning", key, title, detail_url, "rnd", place="부산",
+                           published=iso(published.get_text(strip=True).replace(".", "-")) if published else "",
+                           eligibility=eligibility,
+                           **planning_fields(title, period.get_text(" ", strip=True) if period else "")))
+    return rows
+
+
+def nia_planning(get):
+    base = "https://aihub.or.kr/aihubnews/notice/"
+    query = {"currMenu": 132, "topMenu": 103}
+    doc = page(get, "nia_planning", params(base + "list.do", **query))
+    links = require(doc.select("td.subject a.btnView[data-key]"))
+    rows = []
+    for a in links:
+        title, key = a.get_text(" ", strip=True), a["data-key"]
+        if not key.isdecimal() or not re.search(r"데이터.*구축.*수요\s*조사", title):
+            continue
+        detail_url = params(base + "view.do", **query, nttSn=key)
+        detail = page(get, "nia_planning", detail_url)
+        body = detail.select_one(".newsView")
+        if not body:
+            continue
+        text = body.get_text("\n", strip=True)
+        audience = re.search(r"조사대상\s*:\s*([^\n]+)", text)
+        period = re.search(r"조사기간\s*:\s*([^\n]+)", text)
+        if title not in text or not period:
+            continue
+        rows.append(record("nia_planning", key, title, detail_url, "rnd",
+                           eligibility=audience[1] if audience else "",
+                           topic="현장에 필요한 AI 학습용 데이터 수요 제안",
+                           **planning_fields(title, period[1])))
+    return rows
+
+
+def keit_planning(get):
+    listing = "https://itech.keit.re.kr/bsnsancm/retrieveSbjtPlnnAncmList.do"
+    # Keep the verified cross-sector baseline when ITECH temporarily redirects.
+    candidates = {"001026": ""}
+    try:
+        doc = page(get, "keit_planning", listing)
+        links = require(doc.select('a[href="#detail"][onclick^="f_detailPage"]'))
+    except PLANNING_HTTP as error:
+        print(f"KEIT index unavailable: {type(error).__name__}", file=sys.stderr)
+        links = []
+    for a in links:
+        title = a.get_text(" ", strip=True)
+        key = re.search(r"'(\d+)'", a["onclick"])
+        if key and PLANNING_TOPIC.search(title):
+            candidates[key[1]] = title
+    rows = []
+    for key, expected_title in list(candidates.items())[:5]:
+        if expected_title and not planning_type(expected_title):
+            continue
+        url = params("https://srome.keit.re.kr/srome/biz/perform/opnnPrpsl/retrieveRndPlnnDtlView.do",
+                     prgmId="XPG201010000", sbjtPlnnAncmId=key)
+        try:
+            detail = page(get, "keit_planning", url)
+        except PLANNING_HTTP as error:
+            print(f"KEIT detail unavailable: {type(error).__name__}", file=sys.stderr)
+            continue
+        heading = detail.select_one(".board-head h3")
+        if not heading:
+            continue
+        title = heading.get_text(" ", strip=True)
+        if (expected_title and title != expected_title) or not PLANNING_TOPIC.search(title):
+            continue
+        fields = {label.get_text(strip=True): label.find_next_sibling(class_="val").get_text(" ", strip=True)
+                  for label in detail.select(".board-head .label") if label.find_next_sibling(class_="val")}
+        rows.append(record("keit_planning", key, title, url, "rnd", published=iso(fields.get("공고일")),
+                           **planning_fields(title, fields.get("접수기간", ""))))
+    return require(rows)
+
+
+def nipa_demand(get):
+    url = "https://nxt.nipa.kr/indexBms.do"
+    try:
+        doc = page(get, "nipa_demand", url)
+        require([tab for tab in doc.select(".vn_title p") if tab.get_text(strip=True) == "수요조사공고"])
+    except PLANNING_HTTP as error:
+        print(f"NIPA NXT demand index unavailable: {type(error).__name__}", file=sys.stderr)
+        return []
+    cards = doc.select('.vn_box[data-type="dmand"]')
+    # shortcut: audit candidates here; publish details once NXT exposes a verified direct notice link.
+    titles = {title.get_text(" ", strip=True) for card in cards
+              if (title := card.select_one("p:nth-of-type(2)")) and planning_type(title.get_text(" ", strip=True))}
+    print(f"NIPA NXT public demand candidates: {len(titles)}", flush=True)
+    return []
+
+
+def kimst_planning(get):
+    base = "https://www.kimst.re.kr/u/news/notice_01/board.do"
+    rows = []
+    for key in ("153421765145001", "153421765145982"):
+        url = params(base, bno=key, type="view")
+        detail = page(get, "kimst_notice", url)
+        body = detail.select_one(".bbs-article-detail")
+        heading = detail.select_one(".bbs-article-title")
+        if not body or not heading:
+            continue
+        title = heading.get_text(" ", strip=True)
+        lines = [p.get_text(" ", strip=True) for p in body.select("p")]
+        period = next((line for line in lines if re.match(r"ㅇ\s*(?:조사\s*)?기\s*간\s*:", line)), "")
+        if planning_type(title) and planning_period(period):
+            date_cell = detail.find("th", string=re.compile(r"작성일"))
+            published = date_cell.find_next_sibling("td") if date_cell else None
+            rows.append(record("kimst_notice", key, title, url, "rnd",
+                               published=iso(published.get_text(strip=True)) if published else "",
+                               **planning_fields(title, period)))
+    return rows
+
+
 def announcements(get, source, url, selector, key, category):
     rows = []
     for anchor in page(get, source, url).select(selector):
@@ -121,8 +374,9 @@ def announcements(get, source, url, selector, key, category):
             dates = re.findall(DATE, period)
             deadline = iso(dates[-1]) if len(dates) >= 2 else ""
         identifier = parse_qs(urlsplit(href).query)[key][0] if key else href.rsplit("/", 1)[-1]
+        stage = planning_type(title) or ("application" if source == "kimst_rnd" else "")
         rows.append(record(source, identifier, title, urljoin(url, href), kind,
-                           published=published, deadline=deadline))
+                           published=published, deadline=deadline, planning_stage=stage if kind == "rnd" else ""))
     return require(rows)
 
 
@@ -142,7 +396,7 @@ def iris(get):
                 title += f" · {sub_title}"
         rows.append(record("iris", ":".join(args[i] for i in (0, 2, 3)), title,
                            params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]),
-                           "rnd", deadline=iso(args[6])))
+                           "rnd", deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
     return [row for row in require(rows) if MARINE.search(row["title"]) or AI.search(row["title"])]
 
 
@@ -465,8 +719,15 @@ def build(samples):
     get = reader(samples)
     sources = dict(SOURCES)
     if not samples:
+        notice_label, collect_notices = sources["kimst_notice"]
+        sources["kimst_notice"] = (notice_label, lambda get: collect_notices(get) + kimst_planning(get))
         sources["jcia"] = ("전남정보문화산업진흥원", jcia_notices)
         sources["nor_shipping"] = ("Nor-Shipping", nor_shipping)
+        sources["tp_planning"] = ("지역 테크노파크", regional_planning)
+        sources["bistep_planning"] = ("BISTEP", bistep_planning)
+        sources["nia_planning"] = ("NIA·AI허브", nia_planning)
+        sources["nipa_demand"] = ("NIPA·NXT 수요조사", nipa_demand)
+        sources["keit_planning"] = ("KEIT 과제기획", keit_planning)
 
     records, failed = {}, []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -490,7 +751,8 @@ def build(samples):
     shutil.copytree(ROOT / "site/logos", dist / "logos", dirs_exist_ok=True)
     updated_at = datetime.now(timezone.utc)
     payload = {"updated_at": updated_at.isoformat(), "sample": bool(samples),
-               "sources": {key: label for key, (label, _) in sources.items()},
+               "sources": {key: label for key, (label, _) in sources.items() if key != "nipa_demand" or
+                           any(row["source"] == key for row in records.values())},
                "records": list(records.values())}
     temporary = dist / "data.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

@@ -4,7 +4,34 @@ from unittest.mock import patch
 
 from ddgs.exceptions import DDGSException
 
-from collect import NOR_SHIPPING, merge_exhibitions, nor_shipping, record
+from collect import NOR_SHIPPING, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record
+
+
+class PlanningTest(unittest.TestCase):
+    def test_participation_type_and_deadline_remain_distinct(self):
+        self.assertEqual(planning_fields("연구개발사업 RFP 초안 사전공시", "2026.10.26.(월) ~ 11.4.(수) 18:00"),
+                         {"planning_stage": "opinion", "opens": "2026-10-26",
+                          "deadline": "2026-11-04", "deadline_time": "18:00"})
+        self.assertEqual(planning_fields("[예비공고] R&D 기획지원사업", "2026-11-16 ~ 2026-11-27"),
+                         {"planning_stage": "preview"})
+        self.assertEqual(planning_fields("기업주도형 산학연 공동R&D 과제기획", "")["planning_stage"], "joint")
+        self.assertEqual(planning_fields("중소기업 R&D 기획 지원", "")["planning_stage"], "planning")
+        self.assertEqual(planning_fields("AI 학습용 데이터 구축 수요조사", "2026년 11월 9일~11월 18일")["deadline"],
+                         "2026-11-18")
+
+    def test_nia_uses_detail_for_the_proposal_deadline(self):
+        title = "2027년 AI 성능강화 데이터 구축 수요조사"
+
+        def get(name, url):
+            if "list.do" in url:
+                return f'<table><tr><td class="subject"><a class="btnView" data-key="10573">{title}</a></td></tr></table>'.encode()
+            return (f'<div class="newsView"><p>{title}</p><p>조사대상 : 국민 누구나<br>'
+                    '조사기간 : 2026년 11월 9일(월) ~ 11월 18일(수)</p></div>').encode()
+
+        entry, = nia_planning(get)
+        self.assertEqual(entry["planning_stage"], "demand")
+        self.assertEqual(entry["eligibility"], "국민 누구나")
+        self.assertEqual(entry["deadline"], "2026-11-18")
 
 
 class NorShippingTest(unittest.TestCase):
