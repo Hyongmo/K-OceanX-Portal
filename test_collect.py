@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -17,11 +18,14 @@ class NorShippingTest(unittest.TestCase):
         lookup_cases = (
             ([{"href": "https://nor-shipping.com.example/the-exhibition/"},
               {"href": "https://www.nor-shipping.com/the-exhibition/", "title": "Wrong date"}],
+             None,
              "https://www.nor-shipping.com/"),
-            (DDGSException("No results found."), NOR_SHIPPING),
+            (DDGSException("No results found."), [{"url": "http://www.nor-shipping.com/"}],
+             "https://www.nor-shipping.com/"),
+            (DDGSException("No results found."), [], NOR_SHIPPING),
         )
-        for response, expected_url in lookup_cases:
-            with self.subTest(expected_url=expected_url), patch("collect.DDGS") as search:
+        for response, mwmbl_results, expected_url in lookup_cases:
+            with self.subTest(mwmbl_results=mwmbl_results), patch("collect.DDGS") as search:
                 lookup = search.return_value.text
                 if isinstance(response, Exception):
                     lookup.side_effect = response
@@ -29,6 +33,10 @@ class NorShippingTest(unittest.TestCase):
                     lookup.return_value = response
 
                 def get(source, url):
+                    if source == "mwmbl":
+                        self.assertIsNotNone(mwmbl_results)
+                        self.assertTrue(url.startswith("https://api.mwmbl.org/api/v2/search/?"))
+                        return json.dumps({"results": mwmbl_results}).encode()
                     self.assertEqual((source, url), ("nor_shipping", expected_url))
                     return official_page
 

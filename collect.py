@@ -222,22 +222,40 @@ def bisfe(get):
                    event_end=date(year + (end_month < month), end_month, end_day).isoformat(), place=cells["장소"])]
 
 
-def discover_nor_shipping():
+def nor_shipping_origin(links):
     # shortcut: one reviewed organizer; add a parser before admitting another event site.
+    official = re.compile(r"^https?://((?:www\.)?nor-shipping\.com)(?:/|$)")
+    return next((f"https://{match[1]}/" for url in links
+                 if isinstance(url, str) and (match := official.match(url))), None)
+
+
+def discover_nor_shipping(get):
     try:
         items = DDGS(timeout=10).text("maritime exhibition site:nor-shipping.com",
                                       max_results=8, backend="duckduckgo", region="uk-en")
     except DDGSException as error:
         print(f"DDGS DuckDuckGo returned no usable response ({type(error).__name__})", flush=True)
+    else:
+        url = nor_shipping_origin(item.get("href") for item in items)
+        print(f"DDGS DuckDuckGo: {len(items)} results, Nor-Shipping official host matched: {bool(url)}", flush=True)
+        if url:
+            return url
+
+    query = params("https://api.mwmbl.org/api/v2/search/", q="Nor-Shipping maritime exhibition")
+    try:
+        items = json.loads(get("mwmbl", query))["results"]
+        if not isinstance(items, list):
+            raise ValueError("Unexpected Mwmbl response")
+        url = nor_shipping_origin(item.get("url") for item in items if isinstance(item, dict))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"Mwmbl returned no usable response ({type(error).__name__})", flush=True)
         return None
-    official = re.compile(r"^(https://(?:www\.)?nor-shipping\.com)(?:/|$)")
-    match = next((match for item in items if (match := official.match(item.get("href") or ""))), None)
-    print(f"DDGS DuckDuckGo: {len(items)} results, Nor-Shipping official host matched: {bool(match)}", flush=True)
-    return f"{match[1]}/" if match else None
+    print(f"Mwmbl: {len(items)} results, Nor-Shipping official host matched: {bool(url)}", flush=True)
+    return url
 
 
 def nor_shipping(get):
-    url = discover_nor_shipping()
+    url = discover_nor_shipping(get)
     if not url:
         print("Nor-Shipping: collecting from the reviewed organizer URL", flush=True)
         url = NOR_SHIPPING
