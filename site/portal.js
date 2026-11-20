@@ -60,7 +60,8 @@ function searchTerms(query) {
 
 function matches(record, terms) {
   const subject = [record.title, record.place, record.topic, record.eligibility, data.sources[record.source],
-    categories[record.category]].filter(Boolean).join(" ");
+    record.gep_notice?.title, data.sources[record.gep_notice?.source], categories[record.category]]
+    .filter(Boolean).join(" ");
   const compact = normalize(subject);
   return terms.every((group) => group.some((word) => {
     if (word !== "ai") return compact.includes(word);
@@ -83,13 +84,17 @@ function appendRecord(parent, entry) {
   if (entry.exhibition_start && entry.exhibition_end) addText(meta, "span", `전시장 운영 ${entry.exhibition_start} ~ ${entry.exhibition_end}`);
   if (entry.deadline) {
     const time = entry.deadline_time ? " " + entry.deadline_time + " KST" : "";
-    addText(meta, "span", `${isClosed(entry) ? "마감" : "신청 마감"} ${entry.deadline}${time}`);
+    const deadlineLabel = entry.gep_notice ? "KOTRA 신청 마감" : isClosed(entry) ? "마감" : "신청 마감";
+    addText(meta, "span", `${deadlineLabel} ${entry.deadline}${time}`);
   }
   if (entry.place) addText(meta, "span", entry.place);
   for (const [field, label] of [["visit_url", "참관 안내"], ["exhibit_url", "전시 참가 안내"]]) {
     if (entry[field]?.startsWith("https://nor-shipping.com/")) {
       addText(meta, "a", label).href = entry[field];
     }
+  }
+  if (entry.gep_notice?.url.startsWith("https://www.gep.or.kr/gept/")) {
+    addText(meta, "a", "KOTRA 전시 안내").href = entry.gep_notice.url;
   }
   if (!meta.childElementCount) meta.remove();
   if (entry.eligibility && entry.eligibility_url?.startsWith("https://www.jcia.or.kr/")) {
@@ -107,7 +112,7 @@ function render() {
   const source = el("source").value;
   const results = data.records.filter((entry) =>
     (selected === "all" || entry.category === selected) &&
-    (!source || entry.source === source) && matches(entry, terms));
+    (!source || entry.source === source || entry.gep_notice?.source === source) && matches(entry, terms));
   results.sort((a, b) => {
     if (el("sort").value === "deadline") {
       const upcoming = (entry) => entry.deadline && !isClosed(entry) ? entry.deadline + (entry.deadline_time || "23:59") : "9999";

@@ -288,6 +288,18 @@ def nor_shipping(get):
                    place=place, **participation)]
 
 
+def merge_nor_shipping(records):
+    # shortcut: one verified cross-reference; extend when other events have confirmed matches.
+    official = records.get("nor_shipping:2027")
+    gep_notice = records.get("gep:OVS000029059")
+    if official is None or gep_notice is None:
+        return
+    official["gep_notice"] = {field: gep_notice[field] for field in ("source", "title", "url")}
+    if gep_notice.get("deadline"):
+        official["deadline"] = gep_notice["deadline"]
+    del records[gep_notice["id"]]
+
+
 def naver_headers():
     client_id = os.getenv("NAVER_CLIENT_ID")
     client_secret = os.getenv("NAVER_CLIENT_SECRET")
@@ -441,6 +453,7 @@ def build(samples):
     if failed:
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
+    merge_nor_shipping(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     for name in ("index.html", "portal.css", "portal.js"):
