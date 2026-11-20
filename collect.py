@@ -2,9 +2,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
-from email.utils import parsedate_to_datetime
 import gzip
-from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -204,24 +202,26 @@ def bisfe(get):
                    event_end=date(year + (end_month < month), end_month, end_day).isoformat(), place=cells["장소"])]
 
 
-def naver(get, credentials):
-    rows = []
+def check_naver(get):
+    client_id = os.getenv("NAVER_CLIENT_ID")
+    client_secret = os.getenv("NAVER_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise SystemExit("Missing Naver Actions Secrets")
+    headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
+    total = 0
     for term in NEWS_TERMS:
         url = params("https://openapi.naver.com/v1/search/news.json", query=term, display=20, sort="date")
-        headers = dict(zip(("X-Naver-Client-Id", "X-Naver-Client-Secret"), credentials))
-        for item in json.loads(get("naver", url, headers))["items"]:
-            # shortcut: match the headline until relevance is evaluated against a labeled sample.
-            title = clean(item["title"])
-            if not MARINE.search(title):
-                continue
-            link = next((value for value in (item.get("originallink"), item.get("link"))
-                         if value and urlsplit(value).scheme == "https" and urlsplit(value).hostname), None)
-            if not link:
-                continue
-            key = sha256(link.encode()).hexdigest()[:24]
-            rows.append(record("naver", key, title, link, "industry", topic=term,
-                               published=parsedate_to_datetime(item["pubDate"]).date().isoformat()))
-    return rows
+        items = json.loads(get("naver", url, headers))["items"]
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict) or not item.get("title") or not item.get("link")
+            for item in items
+        ):
+            raise ValueError("Naver API returned an unexpected news response")
+        total += len(items)
+        print(f"{term}: {len(items)} news results")
+    if total == 0:
+        raise SystemExit("Naver API returned zero news results")
+    print(f"Naver API verified: {total} news results across {len(NEWS_TERMS)} queries")
 
 
 SOURCES = {
@@ -243,11 +243,6 @@ SOURCES = {
 def build(samples):
     get = reader(samples)
     sources = dict(SOURCES)
-    credentials = tuple(os.getenv(key) for key in ("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"))
-    if any(credentials) and not all(credentials):
-        raise SystemExit("Set both NAVER_CLIENT_ID and NAVER_CLIENT_SECRET")
-    if all(credentials) and not samples:
-        sources["naver"] = ("네이버 뉴스", lambda fetch: naver(fetch, credentials))
 
     records, failed = {}, []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -279,4 +274,9 @@ def build(samples):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=Path, help="Replay saved HTTP responses from the source checks")
-    build(parser.parse_args().samples)
+    parser.add_argument("--check-naver", action="store_true", help="Check live Naver News response counts")
+    args = parser.parse_args()
+    if args.check_naver:
+        check_naver(reader(None))
+    else:
+        build(args.samples)

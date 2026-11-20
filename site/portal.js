@@ -112,7 +112,12 @@ function reset() {
 }
 
 fillCategories();
-el("query").addEventListener("input", reset);
+el("query").addEventListener("input", () => {
+  const naverSearch = new URL(el("naver-news").href);
+  naverSearch.searchParams.set("query", el("query").value.trim() || "해양수산 AI");
+  el("naver-news").href = naverSearch.href;
+  reset();
+});
 el("source").addEventListener("change", reset);
 el("sort").addEventListener("change", reset);
 el("more").addEventListener("click", () => { limit += 20; render(); });

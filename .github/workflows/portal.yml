@@ -3,6 +3,10 @@ name: Collect and publish portal
 on:
   workflow_dispatch:
     inputs:
+      check_naver:
+        description: Verify Naver News API without building or publishing the site
+        type: boolean
+        default: false
       publish:
         description: Publish to the configured GitHub Pages site
         type: boolean
@@ -27,11 +31,17 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - run: python collect.py
+      - name: Verify Naver News API
+        if: inputs.check_naver && !inputs.publish
+        run: python collect.py --check-naver
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      - name: Collect public portal information
+        if: "!inputs.check_naver || inputs.publish"
+        run: python collect.py
       - uses: actions/upload-pages-artifact@v4
+        if: "!inputs.check_naver || inputs.publish"
         with:
           path: dist
 
