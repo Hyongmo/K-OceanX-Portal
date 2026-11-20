@@ -8,12 +8,12 @@ TYPES = {
     "research": "R&D 본과제",
     "technical": "기술지원·제품 고도화",
     "testing": "실증·시험·인증",
-    "infrastructure": "공간·인프라",
+    "infrastructure": "공간·인프라 확보",
     "incubation": "창업보육·액셀러레이팅",
     "commercial": "사업화·국내 판로",
     "export": "수출·해외진출",
-    "finance": "투자·금융",
-    "people": "인력·채용·교육",
+    "finance": "자금조달·투자유치",
+    "people": "인재 확보·역량 강화",
     "management": "지식재산·경영",
 }
 STAGES = {
@@ -26,9 +26,9 @@ STAGES = {
 }
 METHODS = {
     "funding": "사업비·비용 지원",
-    "access": "공간·장비·데이터 이용",
-    "service": "교육·멘토링 등 서비스",
-    "matching": "매칭·연계",
+    "access": "공간·장비·데이터 제공",
+    "service": "교육·멘토링·컨설팅",
+    "matching": "매칭·상담 연계",
     "equity": "직접투자",
     "loan": "융자·보증",
 }

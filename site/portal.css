@@ -68,6 +68,7 @@ input, select, button { font: inherit; }
 .briefing-link { color: var(--teal); font-size: .87rem; text-underline-offset: .2em; }
 .briefing-when { font-weight: 680; color: var(--teal); }
 nav { display: flex; flex-wrap: wrap; gap: .45rem; padding-bottom: 1.45rem; border-bottom: 1px solid var(--line); }
+.category-count { margin-inline-start: .35em; font-size: .84em; font-weight: 650; font-variant-numeric: tabular-nums; }
 button { border: 1px solid var(--line); border-radius: .4rem; padding: .55rem .8rem; background: white; color: inherit; cursor: pointer; }
 button[aria-pressed="true"] { background: var(--teal); border-color: var(--teal); color: white; }
 button:hover:not([aria-pressed="true"]) { border-color: var(--teal); }
@@ -80,8 +81,9 @@ h2 { margin: 0; font-size: 1.45rem; letter-spacing: -.035em; }
 .filters label { display: grid; color: var(--muted); font-size: .9rem; gap: .22rem; }
 .support-filters { margin: 1rem 0 0; min-width: 0; padding: .65rem .9rem .85rem; border: 1px solid var(--line); border-radius: .55rem; }
 .support-filters legend { padding-inline: .25rem; font-weight: 680; }
-.support-filters .filters { justify-content: start; }
-#support-stage-help { margin: .5rem 0 0; color: var(--muted); font-size: .85rem; }
+.support-filters .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+.filters select { min-width: 0; max-width: 100%; }
+#support-filter-help { margin: .5rem 0 0; color: var(--muted); font-size: .85rem; }
 .support-tags { margin: .3rem 0; }
 .support-tags span { border-radius: .2rem; padding: .08rem .38rem; background: #e9f4f1; color: #20524e; }
 .support-tracks { margin-top: .6rem; padding-inline-start: .7rem; border-inline-start: 2px solid #a4c7c2; }

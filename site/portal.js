@@ -59,7 +59,10 @@ const briefingDate = new Intl.DateTimeFormat("ko-KR", {month: "long", day: "nume
 const formatBriefDate = (value) => briefingDate.format(new Date(value + "T00:00:00Z"));
 const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 const supportFields = ["stages", "types", "methods", "regions"];
-const stageStatusLabels = {unclassified: "단계 미분류", not_applicable: "기업 단계 해당 없음"};
+const supportFilters = supportFields.map((field) => `support-${field}`);
+const facetIds = ["source", "planning-stage", ...supportFilters];
+const statusLabels = {unclassified: "미분류", not_applicable: "해당 없음"};
+const categoryCounts = {};
 const blank = () => ({ records: [], sources: {} });
 let data = blank();
 let selected = "all";
@@ -77,6 +80,7 @@ function addText(parent, tag, value, className) {
 function fillCategories() {
   Object.entries(categories).forEach(([key, label]) => {
     const button = addText(el("categories"), "button", label);
+    categoryCounts[key] = addText(button, "span", "", "category-count");
     button.type = "button";
     button.setAttribute("aria-pressed", String(key === selected));
     button.addEventListener("click", () => {
@@ -102,22 +106,39 @@ function supportLabels(entry, field) {
   return (entry.support?.[field] ?? []).map((key) => data.support_facets?.[field]?.[key]).filter(Boolean);
 }
 
-function companyStageKeys(entry) {
-  if (entry.support?.stages?.length) return entry.support.stages;
-  return [["rnd", "support"].includes(entry.category) ? "unclassified" : "not_applicable"];
+function facetKeys(entry, id) {
+  if (id === "source") {
+    return entry.source !== "gep" && entry.gep_notices?.length ? [entry.source, "gep"] : [entry.source];
+  }
+  if (id === "planning-stage") {
+    return [entry.planning_stage || (entry.category === "rnd" ? "unclassified" : "not_applicable")];
+  }
+  const keys = entry.support?.[id.slice("support-".length)];
+  return keys?.length ? keys : [["rnd", "support"].includes(entry.category) ? "unclassified" : "not_applicable"];
 }
 
-function updateCompanyStageCounts(entries) {
+function matchesFacets(entry, filters, except) {
+  return filters.every(([id, value]) => id === except || facetKeys(entry, id).includes(value));
+}
+
+function countKeys(entries, keysFor) {
   const counts = new Map();
   for (const entry of entries) {
-    for (const key of companyStageKeys(entry)) {
+    for (const key of new Set(keysFor(entry))) {
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }
-  for (const option of el("support-stages").options) {
-    const label = data.support_facets.stages[option.value] || stageStatusLabels[option.value] || "전체";
+  return counts;
+}
+
+const countLabel = (count) => `${count.toLocaleString("ko-KR")}건`;
+
+function updateFacetCounts(id, entries) {
+  const counts = countKeys(entries, (entry) => facetKeys(entry, id));
+  for (const option of el(id).options) {
+    const label = option.dataset.label ??= option.textContent;
     const count = option.value ? counts.get(option.value) ?? 0 : entries.length;
-    option.textContent = `${label} (${count}건)`;
+    option.textContent = `${label} (${countLabel(count)})`;
   }
 }
 
@@ -283,24 +304,24 @@ function appendRecord(parent, entry, featured = false) {
 function render() {
   if (!ready) return;
   const terms = searchTerms(el("query").value.trim());
-  const source = el("source").value;
-  const stage = selected === "rnd" ? el("planning-stage").value : "";
-  const showSupport = ["all", "rnd", "support"].includes(selected) && Boolean(data.support_facets);
-  const companyStage = showSupport ? el("support-stages").value : "";
-  const filters = showSupport ? supportFields.slice(1).map((field) => [field, el(`support-${field}`).value])
-    .filter(([, value]) => value) : [];
+  const filters = facetIds.map((id) => [id, el(id).value]).filter(([, value]) => value);
+  const showSupport = data.support_facets && (["all", "rnd", "support"].includes(selected) ||
+    filters.some(([id]) => supportFilters.includes(id)));
+  const showPlanning = selected === "rnd" || Boolean(el("planning-stage").value);
   el("support-filters").hidden = !showSupport;
-  const defaultView = !terms.length && !source && !stage && !companyStage && !filters.length &&
-    el("sort").value === "latest";
-  el("planning-stage-filter").hidden = selected !== "rnd";
-  const scope = data.records.filter((entry) =>
-    (selected === "all" || entry.category === selected) &&
-    (!source || entry.source === source || (source === "gep" && entry.gep_notices?.length)) &&
-    (!stage || entry.planning_stage === stage) &&
-    filters.every(([field, value]) => entry.support?.[field]?.includes(value)) &&
-    matches(entry, terms));
-  if (showSupport) updateCompanyStageCounts(scope);
-  const results = companyStage ? scope.filter((entry) => companyStageKeys(entry).includes(companyStage)) : scope;
+  el("planning-stage-filter").hidden = !showPlanning;
+  const defaultView = !terms.length && !filters.length && el("sort").value === "latest";
+  const searched = data.records.filter((entry) => matches(entry, terms));
+  const filtered = searched.filter((entry) => matchesFacets(entry, filters));
+  const totals = countKeys(filtered, (entry) => [entry.category]);
+  for (const [key, count] of Object.entries(categoryCounts)) {
+    count.textContent = " " + countLabel(key === "all" ? filtered.length : totals.get(key) ?? 0);
+  }
+  const categoryScope = selected === "all" ? searched : searched.filter((entry) => entry.category === selected);
+  for (const id of facetIds) {
+    updateFacetCounts(id, categoryScope.filter((entry) => matchesFacets(entry, filters, id)));
+  }
+  const results = selected === "all" ? filtered : filtered.filter((entry) => entry.category === selected);
   const upcoming = (entry) => [entry, ...(entry.gep_notices ?? [])]
     .filter((notice) => notice.deadline && !isClosed(notice))
     .map((notice) => notice.deadline + (notice.deadline_time || "23:59"))
@@ -338,7 +359,7 @@ function reset() {
 }
 
 fillCategories();
-for (const [key, label] of Object.entries(planningStages)) {
+for (const [key, label] of Object.entries({...planningStages, ...statusLabels})) {
   addText(el("planning-stage"), "option", label).value = key;
 }
 el("planning-stage").addEventListener("change", reset);
@@ -367,7 +388,7 @@ fetch(dataUrl, {cache: "no-cache"})
     for (const field of supportFields) {
       const control = el(`support-${field}`);
       const labels = data.support_facets?.[field] ?? {};
-      const options = field === "stages" ? {...labels, ...stageStatusLabels} : labels;
+      const options = {...labels, ...statusLabels};
       for (const [key, label] of Object.entries(options)) {
         addText(control, "option", label).value = key;
       }
