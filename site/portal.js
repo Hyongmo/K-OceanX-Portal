@@ -67,11 +67,11 @@ const supportFields = ["stages", "types", "methods", "regions"];
 const daysFromToday = (value) => (Date.parse(value) - Date.parse(today)) / 86400000;
 const sourceKeys = (entry) => entry.source !== "gep" && entry.gep_notices?.length ?
   [entry.source, "gep"] : [entry.source];
-const deadlines = (entry) => [entry, ...(entry.gep_notices ?? [])].filter((notice) => notice.deadline);
+const noticeDeadlines = (entry) => [entry, ...(entry.gep_notices ?? [])].filter((notice) => notice.deadline);
 const deadlineLabels = {"7": "7일 이내", "30": "30일 이내", later: "30일 이후", past: "마감"};
 const deadlineField = (label) => ({
   label, labels: deadlineLabels,
-  keys: (entry) => deadlines(entry).flatMap((notice) => {
+  keys: (entry) => noticeDeadlines(entry).flatMap((notice) => {
     if (isClosed(notice)) return ["past"];
     const days = daysFromToday(notice.deadline);
     if (days <= 7) return ["7", "30"];
@@ -281,7 +281,7 @@ function selectBriefing(entries) {
     .filter((entry) => entry.planning_stage !== "preview" && (!entry.opens || entry.opens <= today))
     .map((entry) => ({
       entry,
-      deadline: deadlines(entry)
+      deadline: noticeDeadlines(entry)
         .filter((item) => !isClosed(item) && daysFromToday(item.deadline) <= 7)
         .sort(deadlineOrder)[0],
     }))
@@ -428,7 +428,7 @@ function render() {
     hasLocalFilters ? "상단 건수는 검색어와 정보원 기준입니다." : "",
   ].filter(Boolean).join(" ");
   const results = scope.filter((entry) => matchesFacets(entry, localFacets));
-  const upcoming = (entry) => deadlines(entry)
+  const upcoming = (entry) => noticeDeadlines(entry)
     .filter((notice) => !isClosed(notice))
     .map((notice) => notice.deadline + (notice.deadline_time || "23:59"))
     .sort()[0] ?? "9999";
