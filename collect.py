@@ -487,6 +487,7 @@ def build(samples):
     dist.mkdir(exist_ok=True)
     for name in ("portal.css", "portal.js"):
         shutil.copyfile(ROOT / "site" / name, dist / name)
+    shutil.copytree(ROOT / "site/logos", dist / "logos", dirs_exist_ok=True)
     updated_at = datetime.now(timezone.utc)
     payload = {"updated_at": updated_at.isoformat(), "sample": bool(samples),
                "sources": {key: label for key, (label, _) in sources.items()},
