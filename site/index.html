@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="해양수산 AI·데이터 기업을 위한 연구개발, 산업동향, 행사 및 기업지원 정보.">
   <title>K-OceanX 기업성장 정보포털</title>
-  <link rel="stylesheet" href="./portal.css?v=13">
+  <link rel="stylesheet" href="./portal.css?v=14">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -37,7 +37,8 @@
         </p>
       </div>
     </section>
-    <section class="wrap catalog" aria-labelledby="results-title">
+    <section class="wrap catalog" aria-label="정보 탐색">
+      <nav id="categories" aria-label="정보 영역"></nav>
       <section id="briefing" aria-labelledby="briefing-title" hidden>
         <div class="briefing-header">
           <h2 id="briefing-title">기업지원 브리핑</h2>
@@ -54,29 +55,26 @@
           </section>
         </div>
       </section>
-      <nav id="categories" aria-label="정보 영역"></nav>
-      <fieldset id="support-filters" class="support-filters" aria-describedby="support-filter-help" hidden>
-        <legend>기업지원사업 찾기</legend>
+      <div class="toolbar">
+        <div id="results-heading"><h2 id="results-title">통합 결과</h2><p id="summary" role="status">정보를 불러오는 중입니다.</p></div>
         <div class="filters">
-          <label>지원 분야<select id="support-types"><option value="">전체</option></select></label>
-          <label>제공 형태<select id="support-methods"><option value="">전체</option></select></label>
-          <label>기업 단계<select id="support-stages"><option value="">전체</option></select></label>
-          <label>사업 지역<select id="support-regions"><option value="">전체</option></select></label>
+          <label>정보원<select id="source"><option value="">전체</option></select></label>
+          <label id="sort-filter">정렬<select id="sort"><option value="latest">최신순</option><option value="deadline">마감일순</option></select></label>
         </div>
-        <p id="support-filter-help">기업에 필요한 지원 분야와 받고 싶은 제공 형태를 함께 고를 수 있습니다. 예를 들어 ‘사업화·국내 판로’와 ‘사업비·비용 지원’을 선택하면 두 조건을 충족하는 공고를 볼 수 있습니다. 한 공고가 여러 선택지에 포함될 수 있습니다.</p>
+      </div>
+      <fieldset id="section-filters" class="section-filters" hidden>
+        <legend id="section-filter-title"></legend>
+        <div id="section-filter-controls" class="filters"></div>
+        <p id="section-filter-help" hidden>한 공고에 여러 사업 유형이나 제공 형태가 포함될 수 있습니다.</p>
       </fieldset>
       <section id="rnd-featured" aria-labelledby="rnd-featured-title" hidden>
         <h2 id="rnd-featured-title">지금 검토할 R&D 기회</h2>
         <ul id="rnd-picks"></ul>
       </section>
-      <div class="toolbar">
-        <div><h2 id="results-title">통합 결과</h2><p id="summary" role="status">정보를 불러오는 중입니다.</p></div>
-        <div class="filters">
-          <label id="planning-stage-filter" hidden>참여 유형<select id="planning-stage"><option value="">전체</option></select></label>
-          <label>정보원<select id="source"><option value="">전체</option></select></label>
-          <label>정렬<select id="sort"><option value="latest">최신순</option><option value="deadline">마감일순</option></select></label>
-        </div>
-      </div>
+      <aside id="rnd-related" aria-labelledby="rnd-related-title" hidden>
+        <h3 id="rnd-related-title">R&D 트랙을 포함한 기업지원사업</h3>
+        <ul id="rnd-related-links"></ul>
+      </aside>
       <ul id="results"></ul>
       <button type="button" id="more" hidden>더 보기</button>
     </section>

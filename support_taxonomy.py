@@ -4,10 +4,9 @@ import re
 
 
 TYPES = {
-    "planning": "기획·전략",
-    "research": "R&D 본과제",
+    "research": "기업 기술개발 지원",
     "technical": "기술지원·제품 고도화",
-    "testing": "실증·시험·인증",
+    "testing": "실증·시험 지원",
     "infrastructure": "공간·인프라 확보",
     "incubation": "창업보육·액셀러레이팅",
     "commercial": "사업화·국내 판로",
@@ -15,6 +14,7 @@ TYPES = {
     "finance": "자금조달·투자유치",
     "people": "인재 확보·역량 강화",
     "management": "지식재산·경영",
+    "certification": "인증·지정",
 }
 STAGES = {
     "prestartup": "예비창업",
@@ -38,7 +38,6 @@ REGIONS = (
 )
 
 TYPE_TERMS = {
-    "planning": r"사전\s*기획|R&D\s*기획|과제\s*기획|기획\s*(지원|유치|연구)",
     "technical": r"기술\s*(지원|애로)|시제품|제품\s*(고도화|개선)",
     "testing": r"실증|테스트베드|시험[·ㆍ\s]*(분석|평가|인증)|인증\s*지원|규제\s*(특례|샌드박스)",
     "infrastructure": r"입주|입점기업|사무공간|창업공간|공동장비|연구장비|GPU|데이터셋\s*제공",
@@ -48,6 +47,7 @@ TYPE_TERMS = {
     "finance": r"투자\s*(유치|설명회|연계)|엔젤투자|INVESTOR\s*DAY|펀드|정책자금|융자|이차보전",
     "people": r"채용|인력\s*(양성|지원)|인턴\s*(지원|매칭)|교육생|재직자\s*교육|아카데미",
     "management": r"지재권|지식재산|특허\s*(출원|전략)|기술이전|경영\s*컨설팅|회계\s*지원",
+    "certification": r"혁신제품\s*지정|신기술\s*(인증|활용실적\s*증명)|인증\s*(신청|대상|시행)",
 }
 STAGE_TERMS = {
     "prestartup": r"예비\s*창업|예비\s*[,·ㆍ／/]\s*초기\s*창업",
@@ -86,12 +86,11 @@ REVIEWED = {
         "methods": ("matching",),
         "regions": ("서울",),
     },
-    "nia_planning:10573": {"regions": ("전국",)},
 }
 
 
 def classify_support(entry):
-    if entry["category"] not in ("rnd", "support"):
+    if entry["category"] != "support":
         return
     review = REVIEWED.get(entry["id"], {})
     title = entry["title"]
@@ -106,11 +105,6 @@ def classify_support(entry):
     regions = {value for value in (region, prefix[1] if prefix else "") if value in REGIONS}
     if entry["source"] == "jcia":
         regions.add("전남")
-    stage = entry.get("planning_stage")
-    if stage in ("demand", "opinion", "planning", "joint"):
-        types.add("planning")
-    if stage == "application" and entry["source"] in ("kimst_rnd", "iris"):
-        types.add("research")
     for track in entry.get("support_tracks", ()):
         types.update(track["types"])
 

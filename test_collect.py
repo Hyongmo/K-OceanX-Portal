@@ -5,13 +5,21 @@ from unittest.mock import patch
 from ddgs.exceptions import DDGSException
 
 from collect import (
-    NOR_SHIPPING, announcements, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields,
-    pohang_support, record,
+    NOR_SHIPPING, announcements, bistep_planning, classify_information, merge_exhibitions, nia_planning,
+    nor_shipping, planning_fields, pohang_support, record,
 )
 from support_taxonomy import classify_support
 
 
 class SupportTaxonomyTest(unittest.TestCase):
+    def test_formal_rnd_and_company_certification_use_their_own_categories(self):
+        planning = record("tp_planning", "joint", "산학연 공동R&D 과제기획", "https://example.org/", "rnd")
+        classify_support(planning)
+        self.assertNotIn("support", planning)
+        certification = record("kimst_notice", "designation", "혁신제품 지정 시행 공고", "https://example.org/", "support")
+        classify_support(certification)
+        self.assertEqual(certification["support"]["types"], ["certification"])
+
     def test_company_stage_does_not_replace_support_type(self):
         entry = record("kstartup", "179824", "ICT 청년창업지원센터 입주 모집", "https://example.org/", "support")
         classify_support(entry)
@@ -40,6 +48,23 @@ class SupportTaxonomyTest(unittest.TestCase):
         self.assertIn("research", notice["support"]["types"])
         self.assertIn("testing", notice["support"]["types"])
         self.assertEqual(notice["support"]["regions"], ["경북"])
+
+
+class InformationClassificationTest(unittest.TestCase):
+    def test_routes_research_results_and_event_participation_by_purpose(self):
+        cases = [
+            ("kimst_notice", "result", "KIMST 지원 연구, 해양방사능오염 신속탐지 기술 개발", "patent", None),
+            ("nipa", "16953", "한-베트남 AI 디지털 포럼 전시 부스 참가기업 모집", "international", "2026-10-29"),
+            ("nipa", "16922", "베트남 포럼 운영 대행 용역 입찰공고", "support", None),
+            ("kstartup", "179822", "강원권 LIPS 민간운영사 연합 INVESTOR DAY", "domestic", "2026-12-01"),
+            ("nipa", "16967", "하노이 IT지원센터 입주기업 모집", "support", None),
+        ]
+        for source, key, title, category, event_start in cases:
+            with self.subTest(title=title):
+                notice = record(source, key, title, "https://example.org/", "support")
+                classify_information(notice)
+                self.assertEqual(notice["category"], category)
+                self.assertEqual(notice.get("event_start"), event_start)
 
 
 class PlanningTest(unittest.TestCase):

@@ -798,6 +798,66 @@ SOURCES = {
 }
 
 
+# shortcut: verified notice IDs supply dates and venues until detail parsers cover these formats.
+REVIEWED_EVENTS = {
+    "nipa:16953": dict(category="international", event_region="베트남", place="하노이",
+                       event_start="2026-10-29"),
+    "nipa:16931": dict(category="international", event_region="인도", place="벵갈루루 국제전시센터",
+                       event_start="2026-11-17", event_end="2026-11-19"),
+    "kstartup:179822": dict(category="domestic", event_region="서울", place="스페이스쉐어 서울역 3센터",
+                            event_start="2026-12-01", deadline_time="18:00",
+                            participation=["IR 피칭", "상담·매칭"]),
+    "kstartup:179823": dict(category="domestic", event_region="전북", place="김제시 죽산면",
+                            event_start="2026-11-26", deadline_time="23:59"),
+}
+
+
+def classify_information(entry):
+    title = entry["title"]
+    source = entry["source"]
+    if source == "kimst_notice" and re.match(r"KIMST\s*지원\s*연구\s*,", title):
+        entry.update(category="patent", technology_type="연구성과")
+        if re.search(r"오염|방사능", title):
+            entry["technology_fields"] = ["해양환경"]
+    entry.update(REVIEWED_EVENTS.get(entry["id"], {}))
+
+    if entry["category"] == "industry":
+        entry["industry_sectors"] = [
+            label for label, pattern in (
+                ("해운·항만", r"해운|항만|운하"), ("조선·기자재", r"조선|기자재"),
+                ("수산·양식", r"수산|양식|어업|어장"), ("해양", r"해양"),
+                ("AI·디지털", AI), ("금융", r"금융|루블|모바일머니"),
+            ) if re.search(pattern, title)
+        ]
+        entry["industry_topics"] = [
+            label for label, pattern in (
+                ("시장·수출", r"소비|수출|수요|시장|판로"), ("정책·제도", r"정책|제도|규제|의무|선거|관리\s*공백"),
+                ("투자·협력", r"투자|협력"), ("공급망·운송", r"공급망|운하|통항"),
+            ) if re.search(pattern, title)
+        ]
+    if entry["category"] in ("domestic", "international"):
+        types = [label for label, pattern in (
+            ("전시", r"전시|박람회|기술대전|EXPO|Nor-Shipping"),
+            ("콘퍼런스·포럼", r"콘퍼런스|컨퍼런스|포럼|세미나"),
+            ("IR·투자 설명회", r"투자\s*설명회|INVESTOR\s*DAY"),
+        ) if re.search(pattern, title, re.I)]
+        if types:
+            entry["event_types"] = types
+        if source == "nor_shipping":
+            entry["event_region"] = "노르웨이"
+        elif source == "bisfe":
+            entry["event_region"] = "부산"
+        participation = []
+        if entry.get("visit_url"):
+            participation.append("참관")
+        if entry.get("exhibit_url") or ("전시" in types and re.search(r"참가\s*기업\s*모집", title)):
+            participation.append("전시 참가")
+        if re.search(r"매칭\s*부스|상담\s*부스", title):
+            participation.append("상담·매칭")
+        if participation and not entry.get("participation"):
+            entry["participation"] = participation
+
+
 def build(samples):
     get = reader(samples)
     sources = dict(SOURCES)
@@ -827,9 +887,10 @@ def build(samples):
     if failed:
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
-    merge_exhibitions(records)
     for entry in records.values():
+        classify_information(entry)
         classify_support(entry)
+    merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     for name in ("portal.css", "portal.js"):

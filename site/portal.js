@@ -4,6 +4,11 @@ const categories = {
   all: "전체", rnd: "R&D·기획", patent: "특허·기술", industry: "산업동향",
   international: "국제 행사", domestic: "국내 행사", support: "기업지원·인증",
 };
+const areaGroups = [
+  ["공고·지원", "rnd", "support"],
+  ["시장·기술정보", "patent", "industry"],
+  ["행사·네트워킹", "domestic", "international"],
+];
 const planningStages = {
   demand: "수요 제안", opinion: "RFP 의견 제출", planning: "기획비·컨설팅 신청",
   joint: "공동기획 참여", preview: "공모 예고", application: "본공모 신청",
@@ -59,13 +64,35 @@ const briefingDate = new Intl.DateTimeFormat("ko-KR", {month: "long", day: "nume
 const formatBriefDate = (value) => briefingDate.format(new Date(value + "T00:00:00Z"));
 const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 const supportFields = ["stages", "types", "methods", "regions"];
-const supportFilters = supportFields.map((field) => `support-${field}`);
-const facetIds = ["source", "planning-stage", ...supportFilters];
-const statusLabels = {unclassified: "미분류", not_applicable: "해당 없음"};
+const daysFromToday = (value) => (Date.parse(value) - Date.parse(today)) / 86400000;
+const sourceKeys = (entry) => entry.source !== "gep" && entry.gep_notices?.length ?
+  [entry.source, "gep"] : [entry.source];
+const deadlines = (entry) => [entry, ...(entry.gep_notices ?? [])].filter((notice) => notice.deadline);
+const deadlineLabels = {"7": "7일 이내", "30": "30일 이내", later: "30일 이후", past: "마감"};
+const deadlineField = (label) => ({
+  label, labels: deadlineLabels,
+  keys: (entry) => deadlines(entry).flatMap((notice) => {
+    if (isClosed(notice)) return ["past"];
+    const days = daysFromToday(notice.deadline);
+    if (days <= 7) return ["7", "30"];
+    return days <= 30 ? ["30"] : ["later"];
+  }),
+});
+const textField = (label, name) => ({label, keys: (entry) => entry[name] ? [entry[name]] : []});
+const tagField = (label, name) => ({label, keys: (entry) => entry[name] ?? []});
+const eventFields = [
+  {label: "개최 월", keys: (entry) => entry.event_start ? [entry.event_start.slice(0, 7)] : []},
+  textField("개최 지역", "event_region"),
+  tagField("행사 유형", "event_types"),
+  tagField("참가 방식", "participation"),
+  deadlineField("신청 마감"),
+];
 const categoryCounts = {};
+const areaButtons = {};
 const blank = () => ({ records: [], sources: {} });
 let data = blank();
-let selected = "all";
+let selected = "home";
+let localFacets = [];
 let limit = 20;
 let ready = false;
 
@@ -78,19 +105,25 @@ function addText(parent, tag, value, className) {
 }
 
 function fillCategories() {
-  Object.entries(categories).forEach(([key, label]) => {
-    const button = addText(el("categories"), "button", label);
-    categoryCounts[key] = addText(button, "span", "", "category-count");
+  const nav = el("categories");
+  function addArea(parent, key, label) {
+    const button = addText(parent, "button", label);
+    areaButtons[key] = button;
+    if (key !== "home") categoryCounts[key] = addText(button, "span", "", "category-count");
     button.type = "button";
     button.setAttribute("aria-pressed", String(key === selected));
-    button.addEventListener("click", () => {
-      selected = key;
-      el("categories").querySelectorAll("button").forEach((other) => {
-        other.setAttribute("aria-pressed", String(other === button));
-      });
-      reset();
-    });
-  });
+    button.addEventListener("click", () => selectArea(key));
+  }
+  const overview = addText(nav, "div", "", "area-group");
+  addArea(overview, "home", "홈");
+  addArea(overview, "all", categories.all);
+  for (const [label, ...keys] of areaGroups) {
+    const group = addText(nav, "div", "", "area-group");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", label);
+    addText(group, "span", label, "area-group-label").setAttribute("aria-hidden", "true");
+    keys.forEach((key) => addArea(group, key, categories[key]));
+  }
 }
 
 function searchTerms(query) {
@@ -106,19 +139,83 @@ function supportLabels(entry, field) {
   return (entry.support?.[field] ?? []).map((key) => data.support_facets?.[field]?.[key]).filter(Boolean);
 }
 
-function facetKeys(entry, id) {
-  if (id === "source") {
-    return entry.source !== "gep" && entry.gep_notices?.length ? [entry.source, "gep"] : [entry.source];
-  }
-  if (id === "planning-stage") {
-    return [entry.planning_stage || (entry.category === "rnd" ? "unclassified" : "not_applicable")];
-  }
-  const keys = entry.support?.[id.slice("support-".length)];
-  return keys?.length ? keys : [["rnd", "support"].includes(entry.category) ? "unclassified" : "not_applicable"];
+function applicationStatus(entry) {
+  if (/취소|잠정\s*중단/.test(entry.title)) return ["취소·중단"];
+  if (/\[\s*(?:접수\s*마감|마감)\s*\]/.test(entry.title) || isClosed(entry)) return ["마감"];
+  if (entry.planning_stage === "preview" || entry.opens > today) return ["접수 예정"];
+  return entry.opens && entry.deadline ? ["접수 중"] : [];
 }
 
-function matchesFacets(entry, filters, except) {
-  return filters.every(([id, value]) => id === except || facetKeys(entry, id).includes(value));
+function sectionFields(area) {
+  if (area === "rnd") return [
+    {...textField("참여 유형", "planning_stage"), labels: planningStages},
+    {label: "접수 상태", keys: applicationStatus},
+    deadlineField("제안·신청 마감"),
+    {label: "공고 기관", keys: (entry) => {
+      const agency = entry.publisher || {
+        kimst_rnd: "KIMST", kimst_notice: "KIMST", bistep_planning: "BISTEP",
+        nia_planning: "NIA", nipa_demand: "NIPA", keit_planning: "KEIT",
+      }[entry.source];
+      return agency ? [agency] : [];
+    }},
+  ];
+  if (area === "support") return [["types", "사업 유형"], ["stages", "기업 단계"],
+    ["regions", "사업 지역"], ["methods", "제공 형태"]].map(([key, label]) => ({
+    label, labels: data.support_facets?.[key], keys: (entry) => entry.support?.[key] ?? [],
+  }));
+  if (area === "patent") return [
+    textField("자료 유형", "technology_type"), tagField("기술 분야", "technology_fields"),
+    textField("출원 국가", "filing_country"), textField("출원인", "applicant"),
+  ];
+  if (area === "industry") return [
+    tagField("산업 분야", "industry_sectors"), tagField("주제", "industry_topics"),
+    textField("대상 국가·지역", "place"),
+  ];
+  return ["domestic", "international"].includes(area) ? eventFields : [];
+}
+
+function selectArea(area) {
+  if (area === selected) return;
+  selected = area;
+  el("sort").value = "latest";
+  for (const [key, button] of Object.entries(areaButtons)) button.setAttribute("aria-pressed", String(area === key));
+  fillSectionFilters();
+  reset();
+}
+
+function fillSectionFilters() {
+  const controls = el("section-filter-controls");
+  controls.replaceChildren();
+  localFacets = [];
+  const scope = data.records.filter((entry) => entry.category === selected);
+  for (const field of sectionFields(selected)) {
+    const keys = (entry) => {
+      const values = field.keys(entry);
+      return values.length ? values : ["unknown"];
+    };
+    const present = countKeys(scope, keys);
+    // Keep an unpopulated dimension off the screen until at least one value is known.
+    if (!field.labels && ![...present.keys()].some((key) => key !== "unknown")) continue;
+    if (!scope.length) continue;
+    const label = addText(controls, "label", field.label);
+    const control = addText(label, "select", "");
+    addText(control, "option", "전체").value = "";
+    const choices = field.labels ? Object.keys(field.labels) : [...present.keys()].sort((a, b) => a.localeCompare(b, "ko"));
+    for (const key of choices.filter((key) => key !== "unknown")) {
+      addText(control, "option", field.labels?.[key] ?? key).value = key;
+    }
+    if (present.has("unknown")) {
+      addText(control, "option", selected === "support" ? "미분류" : "미확인").value = "unknown";
+    }
+    control.addEventListener("change", reset);
+    localFacets.push({control, keys});
+  }
+  el("section-filters").hidden = !localFacets.length;
+  el("section-filter-title").textContent = selected === "support" ? "기업지원사업 찾기" : `${categories[selected] ?? ""} 필터`;
+}
+
+function matchesFacets(entry, facets, except) {
+  return facets.every(({control, keys}) => control === except || !control.value || keys(entry).includes(control.value));
 }
 
 function countKeys(entries, keysFor) {
@@ -133,9 +230,9 @@ function countKeys(entries, keysFor) {
 
 const countLabel = (count) => `${count.toLocaleString("ko-KR")}건`;
 
-function updateFacetCounts(id, entries) {
-  const counts = countKeys(entries, (entry) => facetKeys(entry, id));
-  for (const option of el(id).options) {
+function updateFacetCounts(control, keys, entries) {
+  const counts = countKeys(entries, keys);
+  for (const option of control.options) {
     const label = option.dataset.label ??= option.textContent;
     const count = option.value ? counts.get(option.value) ?? 0 : entries.length;
     option.textContent = `${label} (${countLabel(count)})`;
@@ -143,6 +240,7 @@ function updateFacetCounts(id, entries) {
 }
 
 function appendSupportTags(parent, entry, brief = false) {
+  if (entry.category !== "support") return;
   const fields = brief ? ["stages", "types"] : supportFields;
   const labels = fields.flatMap((field) => supportLabels(entry, field));
   if (!labels.length) return;
@@ -154,6 +252,9 @@ function matches(record, terms) {
   const gepTitles = (record.gep_notices ?? []).map((notice) => notice.title);
   const subject = [record.title, record.place, record.topic, record.eligibility, record.publisher,
     planningStages[record.planning_stage], data.sources[record.source],
+    record.event_region, record.technology_type, record.filing_country, record.applicant,
+    ...(record.industry_sectors ?? []), ...(record.industry_topics ?? []),
+    ...(record.event_types ?? []), ...(record.participation ?? []), ...(record.technology_fields ?? []),
     ...supportFields.flatMap((field) => supportLabels(record, field)),
     ...gepTitles, gepTitles.length ? data.sources.gep : "", categories[record.category]]
     .filter(Boolean).join(" ");
@@ -165,7 +266,6 @@ function matches(record, terms) {
 }
 
 function selectBriefing(entries) {
-  const daysFromToday = (value) => (Date.parse(value) - Date.parse(today)) / 86400000;
   const relevance = (entry) => {
     if (briefingNotes[entry.id]) return 3;
     const subject = [entry.title, entry.topic].filter(Boolean).join(" ");
@@ -181,8 +281,8 @@ function selectBriefing(entries) {
     .filter((entry) => entry.planning_stage !== "preview" && (!entry.opens || entry.opens <= today))
     .map((entry) => ({
       entry,
-      deadline: [entry, ...(entry.gep_notices ?? [])]
-        .filter((item) => item.deadline && !isClosed(item) && daysFromToday(item.deadline) <= 7)
+      deadline: deadlines(entry)
+        .filter((item) => !isClosed(item) && daysFromToday(item.deadline) <= 7)
         .sort(deadlineOrder)[0],
     }))
     .filter(({deadline}) => deadline)
@@ -245,6 +345,7 @@ function appendRecord(parent, entry, featured = false) {
   addText(top, "span", categories[entry.category], "category");
   addText(top, "span", entry.publisher || data.sources[entry.source]);
   if (entry.planning_stage) addText(top, "span", planningStages[entry.planning_stage]);
+  if (entry.technology_type) addText(top, "span", entry.technology_type);
   const url = new URL(entry.url);
   if (url.protocol !== "https:") return;
   const link = addText(item, "a", entry.title);
@@ -259,7 +360,8 @@ function appendRecord(parent, entry, featured = false) {
       entry.planning_stage === "opinion" ? "의견 마감" : "신청 마감";
     addText(meta, "span", `${label} ${entry.deadline}${time}`);
   }
-  if (entry.place) addText(meta, "span", entry.place);
+  if (entry.event_region) addText(meta, "span", entry.event_region);
+  if (entry.place && entry.place !== entry.event_region) addText(meta, "span", entry.place);
   for (const [field, label] of [["visit_url", "참관 안내"], ["exhibit_url", "전시 참가 안내"]]) {
     if (entry[field]?.startsWith("https://nor-shipping.com/")) {
       addText(meta, "a", label).href = entry[field];
@@ -304,26 +406,30 @@ function appendRecord(parent, entry, featured = false) {
 function render() {
   if (!ready) return;
   const terms = searchTerms(el("query").value.trim());
-  const filters = facetIds.map((id) => [id, el(id).value]).filter(([, value]) => value);
-  const showSupport = data.support_facets && (["all", "rnd", "support"].includes(selected) ||
-    filters.some(([id]) => supportFilters.includes(id)));
-  const showPlanning = selected === "rnd" || Boolean(el("planning-stage").value);
-  el("support-filters").hidden = !showSupport;
-  el("planning-stage-filter").hidden = !showPlanning;
-  const defaultView = !terms.length && !filters.length && el("sort").value === "latest";
+  const source = el("source");
+  const hasLocalFilters = localFacets.some(({control}) => control.value);
+  const defaultView = !terms.length && !source.value && !hasLocalFilters && el("sort").value === "latest";
+  const home = selected === "home";
   const searched = data.records.filter((entry) => matches(entry, terms));
-  const filtered = searched.filter((entry) => matchesFacets(entry, filters));
-  const totals = countKeys(filtered, (entry) => [entry.category]);
+  const shared = source.value ? searched.filter((entry) => sourceKeys(entry).includes(source.value)) : searched;
+  const totals = countKeys(shared, (entry) => [entry.category]);
   for (const [key, count] of Object.entries(categoryCounts)) {
-    count.textContent = " " + countLabel(key === "all" ? filtered.length : totals.get(key) ?? 0);
+    count.textContent = " " + countLabel(key === "all" ? shared.length : totals.get(key) ?? 0);
   }
-  const categoryScope = selected === "all" ? searched : searched.filter((entry) => entry.category === selected);
-  for (const id of facetIds) {
-    updateFacetCounts(id, categoryScope.filter((entry) => matchesFacets(entry, filters, id)));
+  updateFacetCounts(source, sourceKeys, searched);
+  const scope = selected === "all" ? shared : shared.filter((entry) => entry.category === selected);
+  for (const {control, keys} of localFacets) {
+    updateFacetCounts(control, keys, scope.filter((entry) => matchesFacets(entry, localFacets, control)));
   }
-  const results = selected === "all" ? filtered : filtered.filter((entry) => entry.category === selected);
-  const upcoming = (entry) => [entry, ...(entry.gep_notices ?? [])]
-    .filter((notice) => notice.deadline && !isClosed(notice))
+  const help = el("section-filter-help");
+  help.hidden = selected !== "support" && !hasLocalFilters;
+  help.textContent = [
+    selected === "support" ? "한 공고에 여러 사업 유형이나 제공 형태가 포함될 수 있습니다." : "",
+    hasLocalFilters ? "상단 건수는 검색어와 정보원 기준입니다." : "",
+  ].filter(Boolean).join(" ");
+  const results = scope.filter((entry) => matchesFacets(entry, localFacets));
+  const upcoming = (entry) => deadlines(entry)
+    .filter((notice) => !isClosed(notice))
     .map((notice) => notice.deadline + (notice.deadline_time || "23:59"))
     .sort()[0] ?? "9999";
   results.sort((a, b) => {
@@ -334,10 +440,12 @@ function render() {
     return (b.published || b.event_start || "").localeCompare(a.published || a.event_start || "") ||
       a.title.localeCompare(b.title, "ko");
   });
-  el("results-title").textContent = selected === "all" ? "통합 결과" : categories[selected];
-  el("summary").textContent = results.length ? `검색 결과 ${results.length.toLocaleString("ko-KR")}건` :
-    selected === "patent" ? "특허 정보는 연계 준비 중입니다." : "조건에 맞는 정보가 없습니다.";
-  const briefingIds = renderBriefing(selected === "all" && defaultView ? results : []);
+  const briefingIds = renderBriefing(home ? shared : []);
+  el("results-title").textContent = home ? "홈" : selected === "all" ? "통합 결과" : categories[selected];
+  el("results-heading").hidden = home && briefingIds.size > 0;
+  el("sort-filter").hidden = home || ["industry", "patent"].includes(selected);
+  el("summary").textContent = home ? "표시할 브리핑이 없습니다." :
+    results.length ? `검색 결과 ${countLabel(results.length)}` : "조건에 맞는 정보가 없습니다.";
   const picks = selected === "rnd" && defaultView ?
     results.filter((entry) => planningActions[entry.planning_stage] &&
       entry.opens && entry.opens <= today && entry.deadline && !isClosed(entry))
@@ -346,7 +454,15 @@ function render() {
   picks.forEach((entry) => appendRecord(featured, entry, true));
   el("rnd-picks").replaceChildren(featured);
   el("rnd-featured").hidden = !picks.length;
-  const remaining = results.filter((entry) => !picks.includes(entry) && !briefingIds.has(entry.id));
+  const related = selected === "rnd" && !hasLocalFilters ? shared.filter((entry) => entry.category === "support" &&
+    entry.support_tracks?.some((track) => track.types.includes("research")) && entry.url.startsWith("https://")) : [];
+  el("rnd-related").hidden = !related.length;
+  el("rnd-related-links").replaceChildren();
+  for (const entry of related) {
+    const item = addText(el("rnd-related-links"), "li", "");
+    addText(item, "a", entry.title).href = entry.url;
+  }
+  const remaining = results.filter((entry) => !picks.includes(entry));
   const list = document.createDocumentFragment();
   remaining.slice(0, limit).forEach((entry) => appendRecord(list, entry));
   el("results").replaceChildren(list);
@@ -359,10 +475,6 @@ function reset() {
 }
 
 fillCategories();
-for (const [key, label] of Object.entries({...planningStages, ...statusLabels})) {
-  addText(el("planning-stage"), "option", label).value = key;
-}
-el("planning-stage").addEventListener("change", reset);
 el("query").addEventListener("input", () => {
   const query = el("query").value.trim() || "해양수산 AI";
   for (const link of document.querySelectorAll(".naver-search a")) {
@@ -370,7 +482,8 @@ el("query").addEventListener("input", () => {
     search.searchParams.set("query", query);
     link.href = search.href;
   }
-  reset();
+  if (selected === "home" && el("query").value.trim()) selectArea("all");
+  else reset();
 });
 el("source").addEventListener("change", reset);
 el("sort").addEventListener("change", reset);
@@ -385,15 +498,6 @@ fetch(dataUrl, {cache: "no-cache"})
   })
   .then((payload) => {
     data = payload;
-    for (const field of supportFields) {
-      const control = el(`support-${field}`);
-      const labels = data.support_facets?.[field] ?? {};
-      const options = {...labels, ...statusLabels};
-      for (const [key, label] of Object.entries(options)) {
-        addText(control, "option", label).value = key;
-      }
-      control.addEventListener("change", reset);
-    }
     Object.entries(data.sources).forEach(([key, label]) => {
       addText(el("source"), "option", label).value = key;
     });
@@ -406,6 +510,7 @@ fetch(dataUrl, {cache: "no-cache"})
     }).format(new Date(data.updated_at));
     el("briefing-date").textContent = `${dataDate} 수집 기준`;
     ready = true;
+    fillSectionFilters();
     render();
   })
   .catch(() => {
