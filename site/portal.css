@@ -68,8 +68,8 @@ input, select, button { font: inherit; }
 .briefing-link { color: var(--teal); font-size: .87rem; text-underline-offset: .2em; }
 .briefing-when { font-weight: 680; color: var(--teal); }
 nav { display: flex; flex-wrap: wrap; gap: .85rem 1.15rem; align-items: end; padding-bottom: 1.15rem; border-bottom: 1px solid var(--line); }
-.area-group { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .35rem; }
-.area-group-label { flex-basis: 100%; color: var(--muted); font-size: .8rem; font-weight: 650; }
+.area-group { display: grid; grid-template-columns: repeat(2, minmax(0, max-content)); min-width: 0; gap: .35rem; }
+.area-group-label { grid-column: 1 / -1; color: var(--muted); font-size: .8rem; font-weight: 650; }
 .category-count { margin-inline-start: .35em; font-size: .84em; font-weight: 650; font-variant-numeric: tabular-nums; }
 button { border: 1px solid var(--line); border-radius: .4rem; padding: .55rem .8rem; background: white; color: inherit; cursor: pointer; }
 button[aria-pressed="true"] { background: var(--teal); border-color: var(--teal); color: white; }
