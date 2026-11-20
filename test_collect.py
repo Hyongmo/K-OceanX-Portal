@@ -4,10 +4,25 @@ from unittest.mock import patch
 
 from ddgs.exceptions import DDGSException
 
-from collect import NOR_SHIPPING, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record
+from collect import (
+    NOR_SHIPPING, bistep_planning, merge_exhibitions, nia_planning, nor_shipping, planning_fields, record,
+)
 
 
 class PlanningTest(unittest.TestCase):
+    def test_bistep_falls_back_to_verified_partner_publication(self):
+        def get(name, url):
+            if "btis.bistep.re.kr" in url:
+                return ('<div class="viewTypeA"><h2>해양 R&D 기획 수요조사</h2>⑥해양 '
+                        '부산 소재 산·학·연 등 연구개발주체 공고 및 접수기간 : '
+                        '2026.10.26. ~ 11.13. 마. 접수방법</div>').encode()
+            raise OSError("Source unavailable")
+
+        entry, = bistep_planning(get)
+        self.assertEqual(entry["deadline"], "2026-11-13")
+        self.assertEqual(entry["eligibility"], "부산 소재 산·학·연 등 연구개발주체")
+        self.assertEqual(entry["planning_stage"], "demand")
+
     def test_participation_type_and_deadline_remain_distinct(self):
         self.assertEqual(planning_fields("연구개발사업 RFP 초안 사전공시", "2026.10.26.(월) ~ 11.4.(수) 18:00"),
                          {"planning_stage": "opinion", "opens": "2026-10-26",

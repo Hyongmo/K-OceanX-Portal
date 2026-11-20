@@ -212,6 +212,48 @@ def regional_planning(get):
 
 
 def bistep_planning(get):
+    try:
+        return require(bistep_direct(get))
+    except PLANNING_HTTP as error:
+        print(f"BISTEP direct board unavailable: {type(error).__name__}", file=sys.stderr)
+
+    rows = []
+    url = "https://btis.bistep.re.kr/web/board/view.do?brdIdx=52&mId=51"
+    try:
+        doc = page(get, "bistep_planning", url)
+        body = doc.select_one(".viewTypeA")
+        if body and body.h2:
+            title = body.h2.get_text(" ", strip=True)
+            text = body.get_text(" ", strip=True)
+            period = re.search(r"공고 및 접수기간\s*:\s*(.*?)\s*(?:💻|마\. 접수방법)", text)
+            audience = re.search(r"부산 소재 산·학·연 등 연구개발주체", text)
+            if period and planning_type(title) == "demand" and "⑥해양" in text:
+                rows.append(record("bistep_planning", "6142", title, url, "rnd", place="부산",
+                                   eligibility=audience[0] if audience else "",
+                                   **planning_fields(title, period[1])))
+    except PLANNING_HTTP as error:
+        print(f"BTIS notice unavailable: {type(error).__name__}", file=sys.stderr)
+
+    url = "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000121211"
+    try:
+        doc = page(get, "biz_planning", url)
+        heading = doc.select_one("h2.title")
+        fields = {label.get_text(" ", strip=True): label.find_next_sibling("div", class_="txt")
+                  for label in doc.select(".s_title")}
+        if heading and all(fields.get(name) for name in ("사업수행기관", "사업개요", "신청기간")):
+            title = heading.get_text(" ", strip=True)
+            overview = fields["사업개요"].get_text(" ", strip=True)
+            audience = re.search(r"주관기관은\s*[^☞]{1,160}", overview)
+            if "부산과학기술고등교육진흥원" in fields["사업수행기관"].get_text() and planning_type(title):
+                rows.append(record("bistep_planning", "5631", title, url, "rnd", place="부산",
+                                   eligibility=audience[0].strip() if audience else "",
+                                   **planning_fields(title, fields["신청기간"].get_text(" ", strip=True))))
+    except PLANNING_HTTP as error:
+        print(f"BISTEP Bizinfo notice unavailable: {type(error).__name__}", file=sys.stderr)
+    return require(rows)
+
+
+def bistep_direct(get):
     url = "https://www.bistep.re.kr/kor/CMS/Board/Board.do"
     doc = page(get, "bistep_planning", params(url, mCode="MN022"))
     links = require(doc.select('.subject a[href*="board_seq="]'))
