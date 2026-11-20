@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="해양수산 AI·데이터 기업을 위한 연구개발, 산업동향, 행사 및 기업지원 정보.">
+  <title>K-OceanX 기업성장 정보포털</title>
+  <link rel="stylesheet" href="./portal.css">
+  <script defer src="./portal.js"></script>
+</head>
+<body>
+  <header class="top"><div class="wrap top-inner"><a class="brand" href="./">K-Ocean<span>X</span></a><span class="context">기업성장 정보포털</span></div></header>
+  <main>
+    <section class="intro">
+      <div class="wrap">
+        <p class="eyebrow">해양수산 AI · 데이터</p>
+        <h1>기업성장 정보포털</h1>
+        <p>연구개발 공고부터 산업동향, 국내외 행사와 기업지원 정보를 찾아보세요.</p>
+        <label for="query" class="sr-only">통합검색</label>
+        <input id="query" type="search" placeholder="예: 스마트항만, 자율운항, 창업" autocomplete="off">
+      </div>
+    </section>
+    <section class="wrap catalog" aria-labelledby="results-title">
+      <nav id="categories" aria-label="정보 영역"></nav>
+      <div class="toolbar">
+        <div><h2 id="results-title">통합 결과</h2><p id="summary" role="status">정보를 불러오는 중입니다.</p></div>
+        <div class="filters">
+          <label>정보원<select id="source"><option value="">전체</option></select></label>
+          <label>정렬<select id="sort"><option value="latest">최신순</option><option value="deadline">마감일순</option></select></label>
+        </div>
+      </div>
+      <ul id="results"></ul>
+      <button type="button" id="more" hidden>더 보기</button>
+    </section>
+  </main>
+  <footer class="wrap"><span>K-OceanX</span><span id="updated"></span></footer>
+</body>
+</html>
