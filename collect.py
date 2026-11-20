@@ -485,14 +485,18 @@ def build(samples):
     merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
-    for name in ("index.html", "portal.css", "portal.js"):
+    for name in ("portal.css", "portal.js"):
         shutil.copyfile(ROOT / "site" / name, dist / name)
-    payload = {"updated_at": datetime.now(timezone.utc).isoformat(), "sample": bool(samples),
+    updated_at = datetime.now(timezone.utc)
+    payload = {"updated_at": updated_at.isoformat(), "sample": bool(samples),
                "sources": {key: label for key, (label, _) in sources.items()},
                "records": list(records.values())}
     temporary = dist / "data.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     temporary.replace(dist / "data.json")
+    index = (ROOT / "site/index.html").read_text(encoding="utf-8")
+    index = index.replace('src="./portal.js"', f'src="./portal.js?v={updated_at:%Y%m%d%H%M%S%f}"')
+    (dist / "index.html").write_text(index, encoding="utf-8")
     print(f"{len(records)} records written to dist/data.json")
 
 

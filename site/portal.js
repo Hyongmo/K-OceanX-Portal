@@ -161,7 +161,9 @@ el("source").addEventListener("change", reset);
 el("sort").addEventListener("change", reset);
 el("more").addEventListener("click", () => { limit += 20; render(); });
 
-fetch("./data.json", {cache: "no-cache"})
+const dataUrl = new URL("./data.json", document.currentScript.src);
+dataUrl.search = new URL(document.currentScript.src).search;
+fetch(dataUrl, {cache: "no-cache"})
   .then((response) => {
     if (!response.ok) throw new Error("Data unavailable");
     return response.json();
