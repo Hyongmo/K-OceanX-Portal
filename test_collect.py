@@ -1,0 +1,42 @@
+import unittest
+from unittest.mock import patch
+
+from ddgs.exceptions import DDGSException
+
+from collect import NOR_SHIPPING, nor_shipping
+
+
+class NorShippingTest(unittest.TestCase):
+    def test_collects_only_facts_from_official_page(self):
+        official_page = """
+        <meta property="og:title" content="Nor-Shipping 2027">
+        <h2>7–11 JUNE 2027 | EXHIBITION 8–11 JUNE | NOVA SPEKTRUM</h2>
+        <a href="/the-exhibition/">Visit</a>
+        <a href="https://another.example/becomeanexhibitor/">Exhibit</a>
+        """.encode()
+        lookup_cases = (
+            ([{"href": "https://nor-shipping.com.example/the-exhibition/"},
+              {"href": "https://www.nor-shipping.com/the-exhibition/", "title": "Wrong date"}],
+             "https://www.nor-shipping.com/"),
+            (DDGSException("No results found."), NOR_SHIPPING),
+        )
+        for response, expected_url in lookup_cases:
+            with self.subTest(expected_url=expected_url), patch("collect.DDGS") as search:
+                lookup = search.return_value.text
+                if isinstance(response, Exception):
+                    lookup.side_effect = response
+                else:
+                    lookup.return_value = response
+
+                def get(source, url):
+                    self.assertEqual((source, url), ("nor_shipping", expected_url))
+                    return official_page
+
+                row, = nor_shipping(get)
+                self.assertEqual(lookup.call_args.kwargs["backend"], "duckduckgo")
+                self.assertEqual(row["title"], "Nor-Shipping 2027")
+                self.assertEqual(row["event_start"], "2027-06-07")
+                self.assertEqual(row["exhibition_start"], "2027-06-08")
+                self.assertEqual(row["exhibition_end"], "2027-06-11")
+                self.assertEqual(row["visit_url"], NOR_SHIPPING + "the-exhibition/")
+                self.assertNotIn("exhibit_url", row)

@@ -15,6 +15,8 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
+from ddgs import DDGS
+from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -37,6 +39,7 @@ JCIA = "https://www.jcia.or.kr"
 JCIA_QUERY = "AI어장 현장실증 지원 모집 site:jcia.or.kr"
 JCIA_POST = re.compile(r"/cf/Board/([0-9]{1,8})/detailView\.do")
 JCIA_REVIEWED = ("9830", "9759")
+NOR_SHIPPING = "https://nor-shipping.com/"
 
 
 def iso(value):
@@ -219,6 +222,54 @@ def bisfe(get):
                    event_end=date(year + (end_month < month), end_month, end_day).isoformat(), place=cells["장소"])]
 
 
+def discover_nor_shipping():
+    # shortcut: one reviewed organizer; add a parser before admitting another event site.
+    try:
+        items = DDGS(timeout=10).text("maritime exhibition site:nor-shipping.com",
+                                      max_results=8, backend="duckduckgo", region="uk-en")
+    except DDGSException as error:
+        print(f"DDGS DuckDuckGo returned no usable response ({type(error).__name__})", flush=True)
+        return None
+    official = re.compile(r"^(https://(?:www\.)?nor-shipping\.com)(?:/|$)")
+    match = next((match for item in items if (match := official.match(item.get("href") or ""))), None)
+    print(f"DDGS DuckDuckGo: {len(items)} results, Nor-Shipping official host matched: {bool(match)}", flush=True)
+    return f"{match[1]}/" if match else None
+
+
+def nor_shipping(get):
+    url = discover_nor_shipping()
+    if not url:
+        print("Nor-Shipping: collecting from the reviewed organizer URL", flush=True)
+        url = NOR_SHIPPING
+    document = page(get, "nor_shipping", url)
+    title = document.select_one('meta[property="og:title"]')
+    title_match = re.fullmatch(r"Nor-Shipping (\d{4})", title.get("content", "")) if title else None
+    if not title_match:
+        raise ValueError("Nor-Shipping event title format changed")
+    schedule = re.compile(
+        rf"(\d{{1,2}})\s*[–-]\s*(\d{{1,2}})\s+([A-Z]+)\s+{title_match[1]}\s*\|\s*"
+        r"EXHIBITION\s+(\d{1,2})\s*[–-]\s*(\d{1,2})\s+\3\s*\|\s*(.+)", re.I)
+    match = next((match for heading in document.select("h2")
+                  if (match := schedule.fullmatch(heading.get_text(" ", strip=True)))), None)
+    if not match:
+        raise ValueError("Nor-Shipping event schedule format changed")
+    start_day, end_day, month, exhibition_start, exhibition_end, place = match.groups()
+    year = title_match[1]
+    start, end, show_start, show_end = [
+        datetime.strptime(f"{value} {month.title()} {year}", "%d %B %Y").date().isoformat()
+        for value in (start_day, end_day, exhibition_start, exhibition_end)
+    ]
+    if not start <= show_start <= show_end <= end:
+        raise ValueError("Nor-Shipping event dates are inconsistent")
+    links = {urljoin(NOR_SHIPPING, anchor["href"]) for anchor in document.select("a[href]")}
+    participation = {field: link for field, path in (
+        ("visit_url", "the-exhibition/"), ("exhibit_url", "becomeanexhibitor/"))
+        if (link := urljoin(NOR_SHIPPING, path)) in links}
+    return [record("nor_shipping", year, title["content"], NOR_SHIPPING, "international",
+                   event_start=start, event_end=end, exhibition_start=show_start, exhibition_end=show_end,
+                   place=place, **participation)]
+
+
 def naver_headers():
     client_id = os.getenv("NAVER_CLIENT_ID")
     client_secret = os.getenv("NAVER_CLIENT_SECRET")
@@ -356,6 +407,7 @@ def build(samples):
     sources = dict(SOURCES)
     if not samples:
         sources["jcia"] = ("전남정보문화산업진흥원", jcia_notices)
+        sources["nor_shipping"] = ("Nor-Shipping", nor_shipping)
 
     records, failed = {}, []
     with ThreadPoolExecutor(max_workers=4) as pool:
