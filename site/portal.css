@@ -35,12 +35,13 @@ a { color: inherit; }
 .brand-kmi img { clip-path: polygon(0 0, 100% 0, 100% 60%, 27% 60%, 27% 100%, 0 100%); }
 .brand-kmi-center {
   position: absolute;
-  inset-inline-start: 30%;
+  /* Match the Korean wordmark's bounds in the 409-pixel source image. */
+  inset-inline-start: calc(100% * 123 / 409);
   inset-block-start: 60%;
-  font-size: clamp(.49rem, 2.5vw, .79rem);
+  width: calc(100% * 286 / 409);
+  fill: currentColor;
+  font-size: 26px;
   font-weight: 650;
-  line-height: 1;
-  white-space: nowrap;
 }
 .brand:focus-visible { outline-color: #8ae2d5; }
 .intro { color: white; background: linear-gradient(112deg, var(--navy) 20%, #174c59 100%); padding: clamp(2rem, 5vw, 4rem) 0; }
