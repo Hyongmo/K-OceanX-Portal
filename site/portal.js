@@ -14,6 +14,11 @@ const synonyms = [
 ];
 const el = (id) => document.getElementById(id);
 const today = new Intl.DateTimeFormat("sv-SE", {timeZone: "Asia/Seoul"}).format(new Date());
+const nowInSeoul = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+}).format(new Date());
+const isClosed = (entry) => entry.deadline < today ||
+  (entry.deadline === today && entry.deadline_time && entry.deadline_time <= nowInSeoul);
 const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 const blank = () => ({ records: [], sources: {} });
 let data = blank();
@@ -54,7 +59,7 @@ function searchTerms(query) {
 }
 
 function matches(record, terms) {
-  const subject = [record.title, record.place, record.topic, data.sources[record.source],
+  const subject = [record.title, record.place, record.topic, record.eligibility, data.sources[record.source],
     categories[record.category]].filter(Boolean).join(" ");
   const compact = normalize(subject);
   return terms.every((group) => group.some((word) => {
@@ -75,9 +80,18 @@ function appendRecord(parent, entry) {
   const meta = addText(item, "p", "", "meta");
   if (entry.published) addText(meta, "span", `게시 ${entry.published}`);
   if (entry.event_start) addText(meta, "span", `개최 ${entry.event_start}${entry.event_end && entry.event_end !== entry.event_start ? " ~ " + entry.event_end : ""}`);
-  if (entry.deadline) addText(meta, "span", `${entry.deadline < today ? "마감" : "신청 마감"} ${entry.deadline}`);
+  if (entry.deadline) {
+    const time = entry.deadline_time ? " " + entry.deadline_time + " KST" : "";
+    addText(meta, "span", `${isClosed(entry) ? "마감" : "신청 마감"} ${entry.deadline}${time}`);
+  }
   if (entry.place) addText(meta, "span", entry.place);
   if (!meta.childElementCount) meta.remove();
+  if (entry.eligibility && entry.eligibility_url?.startsWith("https://www.jcia.or.kr/")) {
+    const eligibility = addText(item, "p", "", "eligibility");
+    addText(eligibility, "strong", "신청 대상 ");
+    addText(eligibility, "span", entry.eligibility);
+    addText(eligibility, "a", "공식 공고문에서 조건 확인").href = entry.eligibility_url;
+  }
   parent.append(item);
 }
 
@@ -90,7 +104,7 @@ function render() {
     (!source || entry.source === source) && matches(entry, terms));
   results.sort((a, b) => {
     if (el("sort").value === "deadline") {
-      const upcoming = (entry) => entry.deadline && entry.deadline >= today ? entry.deadline : "9999";
+      const upcoming = (entry) => entry.deadline && !isClosed(entry) ? entry.deadline + (entry.deadline_time || "23:59") : "9999";
       const order = upcoming(a).localeCompare(upcoming(b));
       if (order) return order;
     }

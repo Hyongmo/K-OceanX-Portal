@@ -3,6 +3,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 import gzip
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,8 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -28,6 +31,12 @@ WEB_TERMS = (
     "KOTRA 선박 전시회 한국관 참가기업 모집",
     "스마트양식 지원 공고 site:bizinfo.go.kr",
 )
+
+
+JCIA = "https://www.jcia.or.kr"
+JCIA_QUERY = "AI어장 현장실증 지원 모집 site:jcia.or.kr"
+JCIA_POST = re.compile(r"/cf/Board/([0-9]{1,8})/detailView\.do")
+JCIA_REVIEWED = ("9830", "9759")
 
 
 def iso(value):
@@ -57,8 +66,8 @@ def reader(samples):
     def get(name, url, headers=None):
         if samples:
             return (samples / f"{name}.body").read_bytes()
-        if name in ("kimst_rnd", "kimst_notice"):
-            # The KIMST TLS handshake succeeds with curl on the development host.
+        if name in ("kimst_rnd", "kimst_notice", "jcia"):
+            # These publishers work with curl on the development host.
             raw = subprocess.check_output(["curl", "-fsSL", "--max-time", "20", "--max-filesize",
                                            "8000000", "--proto", "=https", url])
         else:
@@ -210,12 +219,20 @@ def bisfe(get):
                    event_end=date(year + (end_month < month), end_month, end_day).isoformat(), place=cells["장소"])]
 
 
-def check_naver(get):
+def naver_headers():
     client_id = os.getenv("NAVER_CLIENT_ID")
     client_secret = os.getenv("NAVER_CLIENT_SECRET")
+    if not client_id and not client_secret:
+        return {}
     if not client_id or not client_secret:
+        raise ValueError("Set both Naver Actions Secrets")
+    return {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
+
+
+def check_naver(get):
+    headers = naver_headers()
+    if not headers:
         raise SystemExit("Missing Naver Actions Secrets")
-    headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
     searches = (
         ("news", NEWS_TERMS, {"display": 20, "sort": "date"}),
         ("webkr", WEB_TERMS, {"display": 10, "start": 1}),
@@ -237,6 +254,87 @@ def check_naver(get):
         print(f"Naver {endpoint} API verified: {total} results across {len(terms)} queries")
 
 
+def discover_jcia(get, headers):
+    url = params("https://openapi.naver.com/v1/search/webkr.json",
+                 query=JCIA_QUERY, display=10, start=1)
+    items = json.loads(get("naver", url, headers))["items"]
+    ids = []
+    for item in items:
+        link = urlsplit(item["link"])
+        match = JCIA_POST.fullmatch(link.path)
+        if (link.scheme == "https" and link.netloc in ("www.jcia.or.kr", "jcia.or.kr")
+                and match and match[1] not in ids):
+            ids.append(match[1])
+    print(f"JCIA discovery: {len(ids)} official detail candidates", flush=True)
+    return ids
+
+
+def jcia_post(get, key):
+    url = f"{JCIA}/cf/Board/{key}/detailView.do"
+    document = page(get, "jcia", url)
+    heading = next((h.get_text(" ", strip=True) for h in document.select("h2")
+                    if re.search(r"AI\s*어장\s*현장실증", h.get_text(" ", strip=True))), "")
+    fields = {th.get_text(" ", strip=True): th.find_next_sibling("td")
+              for th in document.select("th") if th.find_next_sibling("td")}
+    deadline = iso(fields["종료일"].get_text(" ", strip=True)) if "종료일" in fields else ""
+    published = iso(fields["등록일"].get_text(" ", strip=True)) if "등록일" in fields else ""
+    if not heading or not deadline or not published:
+        return None
+
+    attachments = []
+    for link in document.select("a[onclick]"):
+        title = link.get_text(" ", strip=True)
+        key_match = re.fullmatch(r"cf_download\('(?P<key>FS_[0-9]{10})'\);?", link["onclick"].strip())
+        if key_match and re.search(r"공고.*\.pdf", title, re.I):
+            attachments.append(key_match["key"])
+    if len(attachments) != 1:
+        return None
+
+    pdf_url = params(f"{JCIA}/async/MultiFile/download.do", FS_KEYNO=attachments[0])
+    pdf = PdfReader(BytesIO(get("jcia", pdf_url)))
+    text = " ".join(" ".join((page.extract_text() or "").split()) for page in pdf.pages[:10])
+    eligibility = re.search(r"(?:지원|신청)\s*대상\s*:\s*([^※❍•]{1,180})(?=\s*[※❍•])", text)
+    timing = re.search(
+        r"접수\s*기간\s*:[^❍•]{0,65}?(\d{2,4})\.\s*(\d{1,2})\.\s*(\d{1,2})"
+        r"\.?\s*(?:\([가-힣]\))?\s*((?:[01]\d|2[0-3]):[0-5]\d)", text)
+    if not eligibility or not timing:
+        return None
+    year, month, day, clock = timing.groups()
+    year = f"20{year}" if len(year) == 2 else year
+    pdf_day = iso(f"{year}-{int(month):02}-{int(day):02}")
+    if pdf_day != deadline:
+        return None
+    return record("jcia", key, heading, url, "support", published=published,
+                  deadline=deadline, deadline_time=clock, eligibility=eligibility[1].strip(),
+                  eligibility_url=pdf_url)
+
+
+def jcia_notices(get, discovery_only=False):
+    headers = naver_headers()
+    discovered = []
+    if headers:
+        try:
+            discovered = discover_jcia(get, headers)
+        except (OSError, ValueError, KeyError, TypeError):
+            if discovery_only:
+                raise
+            print("JCIA discovery unavailable; using reviewed official posts", file=sys.stderr)
+    keys = discovered[:3] if discovery_only else list(dict.fromkeys([*JCIA_REVIEWED, *discovered[:3]]))
+    rows = []
+    for key in keys:
+        try:
+            row = jcia_post(get, key)
+        except (OSError, ValueError, subprocess.SubprocessError, PdfReadError):
+            if key in JCIA_REVIEWED:
+                raise
+            continue
+        if row:
+            rows.append(row)
+    if discovery_only:
+        print(f"JCIA discovery verified from original notices: {len(rows)}", flush=True)
+    return require(rows)
+
+
 SOURCES = {
     "kimst_rnd": ("KIMST 사업공고", lambda get: announcements(get, "kimst_rnd",
         "https://www.kimst.re.kr/u/rnd/inform_01/pjtAnuc.do", 'tr a[href*="anucno="]', "anucno", "rnd")),
@@ -256,6 +354,8 @@ SOURCES = {
 def build(samples):
     get = reader(samples)
     sources = dict(SOURCES)
+    if not samples:
+        sources["jcia"] = ("전남정보문화산업진흥원", jcia_notices)
 
     records, failed = {}, []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -290,6 +390,8 @@ if __name__ == "__main__":
     parser.add_argument("--check-naver", action="store_true", help="Check live Naver News and Web response counts")
     args = parser.parse_args()
     if args.check_naver:
-        check_naver(reader(None))
+        get = reader(None)
+        check_naver(get)
+        jcia_notices(get, discovery_only=True)
     else:
         build(args.samples)

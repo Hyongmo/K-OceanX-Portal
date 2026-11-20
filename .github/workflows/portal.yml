@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       check_naver:
-        description: Verify Naver News and Web APIs without building or publishing the site
+        description: Verify Naver search and official notice discovery without publishing
         type: boolean
         default: false
       publish:
@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - name: Verify Naver News and Web APIs
+      - name: Verify Naver search and official notices
         if: inputs.check_naver && !inputs.publish
         run: python collect.py --check-naver
         env:
@@ -40,6 +40,9 @@ jobs:
       - name: Collect public portal information
         if: "!inputs.check_naver || inputs.publish"
         run: python collect.py
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
       - uses: actions/upload-pages-artifact@v4
         if: "!inputs.check_naver || inputs.publish"
         with:

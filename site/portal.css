@@ -52,3 +52,6 @@ footer { border-top: 1px solid var(--line); color: var(--muted); padding: 1rem 0
   .wrap { width: calc(100% - 1.6rem); }
   #results li { padding-inline: .8rem; }
 }
+
+.eligibility { margin: .45rem 0 0; color: var(--muted); font-size: .9rem; }
+#results .eligibility a { display: inline; margin-inline-start: .55rem; text-decoration: underline; }
