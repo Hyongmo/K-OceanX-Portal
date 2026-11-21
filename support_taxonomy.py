@@ -38,8 +38,8 @@ REGIONS = (
 )
 
 TYPE_TERMS = {
-    "technical": r"기술\s*(지원|애로)|시제품|제품\s*(고도화|개선)",
-    "testing": r"실증|테스트베드|시험[·ㆍ\s]*(분석|평가|인증)|인증\s*지원|규제\s*(특례|샌드박스)",
+    "technical": r"기술\s*(지원|애로|닥터|자문|컨설팅)|애로\s*기술|시제품|제품\s*(고도화|개선)",
+    "testing": r"실증|테스트베드|테스팅|성능\s*평가|시험[·ㆍ\s]*(분석|평가|인증)|인증\s*지원|규제\s*(특례|샌드박스)",
     "infrastructure": r"입주|입점기업|사무공간|창업공간|공동장비|연구장비|GPU|데이터셋\s*제공|설비|"
                       r"시설\s*(?:개선|현대화|구축|지원)|장비\s*(?:구입|보급|지원)",
     "incubation": r"창업\s*보육|인큐베이팅|[액엑]셀러레이팅|오픈이노베이션|KDB\s*NextONE|청년창업지원센터",
@@ -47,9 +47,10 @@ TYPE_TERMS = {
     "export": r"수출|해외|글로벌|국제\s*(?:전시|박람)|하노이|베트남.*포럼|인도.*전시회|"
               r"(?:미국|중국|일본|베트남|유럽|중동|인도|동남아|싱가포르)\S*\s*\S*(?:전시|박람|시장)",
     "finance": r"투자\s*(유치|설명회|연계)|엔젤투자|INVESTOR\s*DAY|펀드|정책자금|융자|이차보전|보증|대출|"
-               r"(?:운전|시설|정책|육성)\s*자금|자금\s*지원|기금",
+               r"(?:운전|시설|정책|육성)\s*자금|자금\s*지원|기금|인센티브|보조금|보급\s*지원",
     "people": r"채용|인력\s*(양성|지원)|인턴|교육생|재직자\s*교육|아카데미|일자리|고용|인건비",
-    "management": r"지재권|지식재산|특허\s*(출원|전략)|기술이전|경영\s*컨설팅|회계\s*지원",
+    "management": r"지재권|지식재산|특허\s*(출원|전략)|기술이전|경영\s*(?:컨설팅|멘토링)|회계\s*지원|"
+                  r"(?<!기술)(?<!기술 )자문|법률|노무|세무|승계",
     "certification": r"혁신제품\s*지정|신기술\s*(인증|활용실적\s*증명)|인증\s*(신청|대상|시행)",
 }
 STAGE_TERMS = {
@@ -108,17 +109,21 @@ def classify_support(entry):
     # field from the API comes next, and the summary and target text last.
     reviewed_types = REVIEWED.get(entry["id"], {}).get("types", ())
     types = {key for key, pattern in TYPE_TERMS.items() if re.search(pattern, title, re.I)}
-    if types or hints.get("types"):
+    official = set(hints.get("types", ()))
+    if not types and official == {"management"}:
+        # Bizinfo files many unrelated programs under "경영", so its summary and target
+        # text are read first and the field is kept only when they name nothing.
+        types = {key for key, pattern in TYPE_TERMS.items() if re.search(pattern, text, re.I)}
+        review["types"] = reviewed_types if types else review["types"]
+    elif types or official:
         review["types"] = reviewed_types if types else review["types"]
     else:
         types = {key for key, pattern in TYPE_TERMS.items() if re.search(pattern, text, re.I)}
     stages = {key for key, pattern in STAGE_TERMS.items() if re.search(pattern, text)}
     methods = {key for key, pattern in METHOD_TERMS.items() if re.search(pattern, text, re.I)}
-    region = entry.get("place", "")
+    # Regions come from the notice's own text, never from where its publisher sits.
     prefix = re.match(r"^\[([^\]]+)\]", title)
-    regions = {value for value in (region, prefix[1] if prefix else "") if value in REGIONS}
-    if entry["source"] == "jcia":
-        regions.add("전남")
+    regions = {value for value in (prefix[1] if prefix else "",) if value in REGIONS}
     for track in entry.get("support_tracks", ()):
         types.update(track["types"])
 

@@ -14,7 +14,6 @@ const PLANNING = {
   demand: "수요 제안", opinion: "RFP 의견", planning: "기획 지원", joint: "공동기획",
   preview: "공모 예고", application: "본공모",
 };
-const MARITIME_SOURCES = new Set(["kimst_rnd", "kimst_notice", "komeri", "bisfe", "jcia", "nor_shipping"]);
 const MARITIME = /해양|수산|어업|어촌|해운|항만|선박|조선(?!일보|대)|기자재|크루즈|블루\s*바이오|해상\s*풍력|쇄빙|ocean|marine|maritime/i;
 const SYNONYMS = [
   ["스마트항만", "스마트 항만", "항만자동화", "항만 자동화"],
@@ -57,9 +56,10 @@ const days = (value) => Math.round((Date.parse(value) - Date.parse(today)) / 864
 const shortDate = (value) => `${Number(value.slice(5, 7))}.${Number(value.slice(8, 10))}`;
 const sourceLabel = (entry) => entry.publisher || data.sources[entry.source] || entry.source;
 const typeLabels = (entry) => (entry.support?.types ?? []).map((key) => data.support_facets?.types?.[key]).filter(Boolean);
-const regionsOf = (entry) => entry.support?.regions ?? (REGIONS.includes(entry.place) ? [entry.place] : []);
+// Regions come from the notice's own text (collected into support.regions), not from its publisher.
+const regionsOf = (entry) => entry.support?.regions ?? [];
 const agesOf = (entry) => entry.ages ?? [];
-const isMaritime = (entry) => Boolean(entry.maritime) || MARITIME_SOURCES.has(entry.source) || MARITIME.test(entry.title);
+const isMaritime = (entry) => Boolean(entry.maritime) || MARITIME.test(entry.title);
 
 function isClosed(entry) {
   if (/\[\s*(?:접수\s*)?마감\s*\]/.test(entry.title)) return true;
@@ -147,8 +147,7 @@ function benefitsOf(entry) {
 }
 
 const techsOf = (entry) => [...(entry.marine_tech ?? []), ...(entry.innovation ?? [])];
-const isMaritimeNotice = (entry) => Boolean((entry.industries ?? []).length || entry.maritime_common ||
-  MARITIME_SOURCES.has(entry.source));
+const isMaritimeNotice = (entry) => Boolean((entry.industries ?? []).length || entry.maritime_common);
 // R&D tasks are fixed on their technology; other notices only when the target line names technology companies.
 const techLimits = (entry) => entry.category === "rnd" ? techsOf(entry) : (entry.tech_only ?? []);
 const techOk = (entry, picks) => !picks.techs.length || techsOf(entry).some((key) => picks.techs.includes(key));
@@ -174,10 +173,6 @@ function companyCheck(entry, picks) {
   if (picks.industries.length && industries.length && !industries.some((key) => picks.industries.includes(key))) {
     return {out: "industry"};
   }
-  // R&D fixed on a field outside ocean and fisheries does not fit a company that named its industry,
-  // unless it concerns a technology the company chose.
-  if (picks.industries.length && entry.category === "rnd" && !entry.open_rnd && !isMaritimeNotice(entry) &&
-    !techsOf(entry).some((key) => picks.techs.includes(key))) return {out: "rnd"};
   return {check: Boolean(entry.manufacturing && picks.industries.length &&
     !picks.industries.some((key) => MAKERS.has(key)))};
 }
@@ -196,7 +191,7 @@ function noticeMatches(entry, picks) {
 function industryTag(entry) {
   const industries = entry.industries ?? [];
   if (industries.length) return ["mine", `${industryNames(industries)} 기업 대상`];
-  if (entry.maritime_common || MARITIME_SOURCES.has(entry.source)) return ["common", "해양수산 기업 전체"];
+  if (entry.maritime_common) return ["common", "해양수산 기업 전체"];
   return ["", "업종 제한 없음"];
 }
 

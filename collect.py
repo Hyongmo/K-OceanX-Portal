@@ -21,7 +21,7 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import AGE_BANDS, age_bands, judge, sector_profile
+from target_rules import AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, sector_profile
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -569,6 +569,9 @@ LONG_REGIONS = {
 }
 DATE_TIME = re.compile(r"(20\d{2})[.\-/\s]*(\d{1,2})[.\-/\s]*(\d{1,2})(?:\D{0,4}?((?:[01]\d|2[0-3]):[0-5]\d))?")
 RND_TITLE = re.compile(r"R&D|연구개발|기술개발\s*사업|신규\s*(?:지원\s*)?(?:대상\s*)?과제|과제\s*공모")
+# Programs that name R&D but give something else: non-R&D tracks, marketing, shared equipment,
+# technology transfer, consulting, or bundles with workplace and training support.
+NOT_RND_TITLE = re.compile(r"비\s*R&D|마케팅|장비\s*(?:공동\s*)?활용|기술\s*(?:이전|거래)|컨설팅|애로|일터\s*개선|재직자\s*훈련")
 # Official program fields mapped onto the portal's support facets.
 KSTARTUP_FIELDS = {
     "사업화": {"types": ["commercial"]},
@@ -632,19 +635,83 @@ def keyed(url, key_param, key, **values):
     return f"{url}?{key_param}={encoded}&{urlencode(values)}"
 
 
-def region_hint(title, authority="", tags=(), organizer=""):
+REGION_NAMES = "|".join(sorted([*LONG_REGIONS, *SHORT_REGIONS], key=len, reverse=True))
+# A region inside an organization's name ("울산창조경제혁신센터", "광주테크노파크") says who runs a
+# program, not who may apply, so it is skipped.
+ORGANIZATION_TAIL = r"[가-힣A-Za-z]*(?:센터|테크노파크|진흥원|공사|재단|대학교?|상공회의소|협회|연구원|산학융합원|TP)"
+
+
+# Cities and counties (시·군) and the province or metropolitan city each belongs to, so a notice
+# that names only "광명시" or "예산군" is read as 경기 or 충남. Names shared by two places
+# (고성군: 강원·경남, 광주시: 경기 vs 광주광역시) and districts (구) are left out.
+CITY_REGIONS = {
+    "경기": "수원시 성남시 의정부시 안양시 부천시 광명시 평택시 동두천시 안산시 고양시 과천시 구리시 남양주시 오산시 "
+            "시흥시 군포시 의왕시 하남시 용인시 파주시 이천시 안성시 김포시 화성시 양주시 포천시 여주시 연천군 가평군 양평군",
+    "강원": "춘천시 원주시 강릉시 동해시 태백시 속초시 삼척시 홍천군 횡성군 영월군 평창군 정선군 철원군 화천군 양구군 "
+            "인제군 양양군",
+    "충북": "청주시 충주시 제천시 보은군 옥천군 영동군 증평군 진천군 괴산군 음성군 단양군",
+    "충남": "천안시 공주시 보령시 아산시 서산시 논산시 계룡시 당진시 금산군 부여군 서천군 청양군 홍성군 예산군 태안군",
+    "전북": "전주시 군산시 익산시 정읍시 남원시 김제시 완주군 진안군 무주군 장수군 임실군 순창군 고창군 부안군",
+    "전남": "목포시 여수시 순천시 나주시 광양시 담양군 곡성군 구례군 고흥군 보성군 화순군 장흥군 강진군 해남군 영암군 "
+            "무안군 함평군 영광군 장성군 완도군 진도군 신안군",
+    "경북": "포항시 경주시 김천시 안동시 구미시 영주시 영천시 상주시 문경시 경산시 의성군 청송군 영양군 영덕군 청도군 "
+            "고령군 성주군 칠곡군 예천군 봉화군 울진군 울릉군",
+    "경남": "창원시 진주시 통영시 사천시 김해시 밀양시 거제시 양산시 의령군 함안군 창녕군 남해군 하동군 산청군 함양군 "
+            "거창군 합천군",
+    "제주": "제주시 서귀포시",
+    "대구": "군위군 달성군",
+    "부산": "기장군",
+    "인천": "강화군 옹진군",
+    "울산": "울주군",
+}
+CITY_TO_REGION = {city: region for region, cities in CITY_REGIONS.items() for city in cities.split()}
+CITY_NAMES = "|".join(sorted(CITY_TO_REGION, key=len, reverse=True))
+
+
+def city_regions(text):
+    """Provinces of the cities and counties a text names, e.g. "연천군 중소기업" → 경기."""
+    return sorted({CITY_TO_REGION[name] for name in re.findall(rf"(?<![가-힣])({CITY_NAMES})", text or "")})
+
+
+def stated_regions(text):
+    """Regions a target line limits applicants to, e.g. "부산 소재", "서울시에 본사", "부산ㆍ울산ㆍ경남 소재"."""
+    found = set()
+    for group in re.findall(rf"((?:{REGION_NAMES})(?:\s*[ㆍ·,/]\s*(?:{REGION_NAMES}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
+                            r"(?:소재|관내|에\s*(?:본사|소재|사업장|주소)|사업장|본사|지역\s*(?:소재|기업|중소|중기업|소기업))",
+                            text or ""):
+        for name in re.findall(REGION_NAMES, group):
+            found.add(LONG_REGIONS.get(name, name))
+    return sorted(found)
+
+
+def content_regions(title, target=""):
+    """Regions read from a notice's own text: the title's [지역] prefix, the stated target
+    ("부산 소재", or a city such as "여수시 관내"; "전국" opens it), then a region or city named in the
+    title outside an organization's name."""
     prefix = re.match(r"\s*\[([^\]]+)\]", title or "")
     if prefix:
         names = [name for name in SHORT_REGIONS if name in prefix[1]]
         if names:
             return names
-    # A provincial authority or a regional agency named after its province, e.g. 울산테크노파크.
-    for name in (authority or "", organizer or ""):
-        for long, short in LONG_REGIONS.items():
-            if name.startswith(long):
-                return [short]
-        if name.startswith(tuple(SHORT_REGIONS)) and not name.startswith(("경제", "대한")):
-            return [next(short for short in SHORT_REGIONS if name.startswith(short))]
+    # "서천군 및 타지역 거주자", "지역 제한 없음": other regions are welcome too.
+    if re.search(r"타\s*(?:지역|시\s*[·ㆍ]?\s*도)|지역\s*(?:제한\s*(?:없|무관)|무관)", target or ""):
+        return ["전국"]
+    stated = set(stated_regions(target)) | set(city_regions(target))
+    if stated:
+        return sorted(stated)
+    if re.search(r"(?<![가-힣])전국", target or ""):
+        return ["전국"]
+    named = {LONG_REGIONS.get(name, name) for name in re.findall(rf"({REGION_NAMES})(?!{ORGANIZATION_TAIL})", title or "")}
+    named.update(city_regions(title))
+    return sorted(named) if 0 < len(named) <= 3 else []
+
+
+def region_hint(title, target="", tags=()):
+    """Regions for a Bizinfo notice from its own text, then its hashtags; otherwise nationwide.
+    The organizer's location does not count."""
+    named = content_regions(title, target)
+    if named:
+        return named
     tagged = {name for tag in tags for name in SHORT_REGIONS if tag in (name, "전남광주") and name in tag}
     return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
 
@@ -668,12 +735,15 @@ def kstartup_stages(value):
 
 
 # K-Startup lists the company age buckets a notice accepts, such as "예비창업자,1년미만,3년미만,7년미만".
-KSTARTUP_AGES = {"예비": "prestartup", "1년미만": "y0_3", "2년미만": "y0_3", "3년미만": "y0_3",
-                 "5년미만": "y3_7", "7년미만": "y3_7", "10년미만": "y7_10", "10년이상": "y10_plus"}
-
-
 def kstartup_ages(value):
-    bands = {band for word, band in KSTARTUP_AGES.items() if word in re.sub(r"\s+", "", value or "")}
+    """Read K-Startup's company age boxes. "7년미만" means under seven years, so it covers
+    every band from opening day up to seven years, not only three to seven."""
+    text = re.sub(r"\s+", "", value or "")
+    bands = set(bands_under(max(map(int, re.findall(r"(\d{1,2})년미만", text)), default=0)))
+    if "예비" in text:
+        bands.add("prestartup")
+    if "10년이상" in text:
+        bands.add("y10_plus")
     return [] if set(AGE_BANDS) <= bands else [band for band in AGE_BANDS if band in bands]
 
 
@@ -747,8 +817,8 @@ def bizinfo_api(get, key):
             dropped["마감"] = dropped.get("마감", 0) + 1
             continue
         tags = [tag.strip() for tag in re.split(r"[,#]", item.get("hashtags") or "") if tag.strip()]
-        is_rnd = bool(planning_type(title) or RND_TITLE.search(title))
-        hints = {"regions": region_hint(title, clean(item.get("jrsdInsttNm")), tags, organizer)}
+        is_rnd = bool(planning_type(title) or RND_TITLE.search(title)) and not NOT_RND_TITLE.search(title)
+        hints = {"regions": region_hint(title, target, tags)}
         field = BIZINFO_FIELDS.get(clean(item.get("pldirSportRealmLclasCodeNm")))
         if field:
             hints["types"] = [field]
@@ -833,7 +903,8 @@ def komeri(get):
         if fields.get("deadline") and fields["deadline"] < today.isoformat():
             continue
         rows.append(record("komeri", number, title, url, "support", published=published,
-                           publisher="한국조선해양기자재연구원", maritime=True, **fields))
+                           publisher="한국조선해양기자재연구원",
+                           maritime=bool(MARITIME.search(f"{title} {fields.get('eligibility', '')}")), **fields))
     return rows
 
 
@@ -1200,12 +1271,20 @@ def build(samples):
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
     drop_hub_duplicates(records)
+    # Every source, not only the hubs, leaves out notices that are not company support
+    # (operator recruitment, service contracts, judges and the like).
+    for key in [key for key, entry in records.items()
+                if entry["category"] in ("support", "rnd") and NOT_SUPPORT.search(entry["title"])]:
+        del records[key]
     for entry in records.values():
         classify_information(entry)
         classify_support(entry)
         if entry["category"] in ("support", "rnd"):
-            entry.update(sector_profile(entry["title"], entry.get("eligibility", ""), entry.get("publisher", ""),
-                                        entry["source"]))
+            entry.update(sector_profile(entry["title"], entry.get("eligibility", "")))
+            # Sources other than the hubs carry no region field; their own target text may name one.
+            named = content_regions(entry["title"], entry.get("eligibility", ""))
+            if named and not entry.get("support", {}).get("regions"):
+                entry.setdefault("support", {})["regions"] = named
             if "ages" not in entry:
                 bands = age_bands(f"{entry['title']} {entry.get('eligibility', '')}")
                 if bands:
