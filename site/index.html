@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&amp;family=Noto+Serif+KR:wght@700;900&amp;display=swap">
-  <link rel="stylesheet" href="./portal.css?v=26">
+  <link rel="stylesheet" href="./portal.css?v=28">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -43,17 +43,14 @@
       </div>
 
       <div class="mode-bar">
-        <div class="mode-switch" role="group" aria-label="보기 방식">
-          <button type="button" data-mode="mine" aria-pressed="true">우리 회사 맞춤</button>
-          <button type="button" data-mode="all" aria-pressed="false">전체 공고 보기</button>
-        </div>
+        <p class="all-note">아무것도 고르지 않으면 지금 신청할 수 있는 전체 공고를 보여 줍니다. 고를수록 우리 회사가 신청할 수 있는 공고로 좁혀집니다.</p>
         <label class="search">
           <span>검색</span>
           <input id="query" type="search" placeholder="사업명·기관·키워드 (예: 스마트양식, 수출, GPU)" autocomplete="off">
         </label>
       </div>
 
-      <div id="finder-mode">
+      <div id="finder">
         <div class="company">
           <p class="step">1 · 우리 회사</p>
           <p class="axis">종사업종 <small>중복 선택 가능 · 해양수산업 특수분류 9대 분류</small></p>
@@ -67,6 +64,8 @@
           <div class="chips small" id="regions" role="group" aria-label="소재지"></div>
           <p class="axis">업력 <small>하나만 선택 · 미선택 시 업력 무관 · 중소기업창업 지원법 기준</small></p>
           <div class="chips small" id="ages" role="group" aria-label="업력"></div>
+          <p class="axis">지원사업 <small>중복 선택 가능 · 미선택 시 전체 지원사업 · 숫자는 신청 가능한 공고 수</small></p>
+          <div class="chips small" id="benefits" role="group" aria-label="지원사업"></div>
           <p class="finder-summary" id="finder-summary" role="status"></p>
           <p class="finder-excluded" id="finder-excluded"></p>
         </div>
@@ -79,10 +78,9 @@
         </div>
 
         <div class="finder-block">
-          <p class="step">3 · 지원사업</p>
-          <h3 class="finder-title">분야 제한 없이 신청할 수 있는 지원사업</h3>
-          <p class="finder-note">업종을 가리지 않는 공고입니다. 원하는 지원사업을 고르세요.</p>
-          <div class="benefit-cards" id="benefit-cards" role="group" aria-label="지원사업"></div>
+          <p class="step">3 · 분야 제한 없는 지원사업</p>
+          <h3 class="finder-title" id="open-title"></h3>
+          <p class="finder-note">업종을 가리지 않는 공고입니다. 마감이 가까운 순서로 보여 드립니다.<span id="open-note"></span></p>
           <ol class="plain-list finder-list" id="open-list"></ol>
           <button type="button" class="more" id="more" hidden>더 보기</button>
           <details class="check-list" id="check-wrap" hidden>
@@ -90,32 +88,16 @@
             <ol class="plain-list finder-list" id="check-list"></ol>
           </details>
         </div>
+
+        <div class="finder-block">
+          <p class="step">4 · 마감된 공고</p>
+          <details class="check-list" id="closed-wrap">
+            <summary id="closed-summary"></summary>
+            <ol class="plain-list finder-list" id="closed-list"></ol>
+          </details>
+        </div>
       </div>
 
-      <div id="all-mode" hidden>
-        <div class="all-filters">
-          <p class="all-note">미선택 시 전체 공고를 보여 줍니다.</p>
-          <div class="filter-row"><p class="axis">지역<small>중복 선택 가능</small></p><div class="chips small" id="all-regions" role="group" aria-label="지역"></div></div>
-          <div class="filter-row"><p class="axis">업력<small>중복 선택 가능</small></p><div class="chips small" id="all-ages" role="group" aria-label="업력"></div></div>
-          <div class="filter-row"><p class="axis">지원사업<small>중복 선택 가능</small></p><div class="chips small" id="all-benefits" role="group" aria-label="지원사업"></div></div>
-          <div class="filter-row"><p class="axis">종사업종<small>중복 선택 가능</small></p><div class="chips small" id="all-industries" role="group" aria-label="종사업종"></div></div>
-          <div class="filter-row"><p class="axis">관련기술<small>중복 선택 가능</small></p><div>
-            <p class="sub-axis">해양수산 기술</p>
-            <div class="chips small" id="all-marine-tech" role="group" aria-label="해양수산 기술"></div>
-            <p class="sub-axis">혁신기술</p>
-            <div class="chips small" id="all-innovation" role="group" aria-label="혁신기술"></div>
-            <div class="chips small tech-unset" id="all-tech-none"></div>
-          </div></div>
-          <p><button type="button" class="reset" id="all-reset">고른 항목 모두 해제</button></p>
-        </div>
-        <div class="status-tabs" role="group" aria-label="신청 상태">
-          <button type="button" data-status="open" aria-pressed="true">접수 중 <span></span></button>
-          <button type="button" data-status="undated" aria-pressed="false">상시·기간 미정 <span></span></button>
-          <button type="button" data-status="closed" aria-pressed="false">마감 <span></span></button>
-        </div>
-        <ol class="plain-list finder-list" id="all-list"></ol>
-        <button type="button" class="more" id="all-more" hidden>더 보기</button>
-      </div>
     </section>
 
     <section id="view-events" class="view" aria-labelledby="events-title" hidden>

@@ -17,7 +17,7 @@ MARITIME = re.compile(
 NOT_SUPPORT = re.compile(
     r"채용|입찰|용역|운영기관\s*(?:모집|선정)|수행기관\s*(?:모집|선정)|위탁기관|평가위원|심사위원|위원\s*모집|"
     r"자문단\s*모집|강사\s*모집|멘토\s*모집|포상|유공|시상식|결과\s*(?:발표|공고|안내)|선정\s*결과|최종\s*선정|"
-    r"합격자|취소\s*공고|운영\s*제안\s*모집|구직자"
+    r"합격자|취소\s*공고|운영\s*제안\s*모집|구직자|통합연구지원시스템\s*운영|(?<![A-Za-z])TEST(?![A-Za-z])"
 )
 INDIVIDUAL_FISHERS = re.compile(r"직불|직접\s*지불|어촌\s*정착|어업인|어업\s*활동|건강\s*검진|영어\s*정착|농어촌\s*민박|귀어|생계")
 INDIVIDUALS = re.compile(r"제대\s*군인|장병|구직자|미취업자|대학생|청소년|어르신")
@@ -130,7 +130,16 @@ MANUFACTURING = re.compile(r"스마트\s*공장|제조\s*(?:기업|업|혁신|�
 # names no other kind of business; "본사 또는 공장" only says where a company sits.
 TARGET_MANUFACTURING = re.compile(r"제조\s*(?:기업|업체)|중소\s*제조|제조업(?!\s*(?:및|또는|,|ㆍ|·|과|이나))|공장\s*등록")
 OTHER_BUSINESS = re.compile(r"서비스|지식|정보통신|IT|소프트웨어|업종\s*무관|모든\s*업종|기타|도소매|유통|무역")
-OPEN_RND = re.compile(r"자유\s*공모|분야\s*무관|창업\s*성장\s*기술\s*개발|기술\s*혁신\s*개발|R&D\s*바우처|디딤돌")
+# R&D support that does not fix a field: open calls, R&D planning and consulting,
+# investment-linked programs, international joint calls, shared equipment and
+# technology transfer.
+OPEN_RND = re.compile(
+    r"자유\s*공모|분야\s*무관|창업\s*성장\s*기술\s*개발|기술\s*혁신\s*개발|R&D\s*바우처|디딤돌|"
+    r"R&D\s*(?:과제\s*)?(?:발굴|기획)|기술\s*[ㆍ·]?\s*제품\s*기획|과제\s*발굴|기획\s*[ㆍ·]?\s*컨설팅|R&D\s*컨설팅|"
+    r"팁스|TIPS|딥테크\s*챌린지|투\s*[ㆍ·]?\s*융자\s*연계|국제\s*공동\s*기술\s*개발|Eureka|유레카|"
+    r"장비\s*공동\s*활용|기업\s*애로|성장\s*단계별\s*맞춤형\s*기술|기술\s*이전|기술\s*거래|광역\s*이음|지역\s*혁신\s*클러스터",
+    re.I,
+)
 
 
 def _keys(table, text):

@@ -466,21 +466,30 @@ def announcements(get, source, url, selector, key, category):
 
 def iris(get):
     url = "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do"
-    rows = []
-    for a in page(get, "iris", url).select('a[onclick^="f_bsnsAncmListForm_view("]'):
-        args = re.findall(r"'([^']*)'", a["onclick"])
-        if len(args) < 7 or not args[0].isdigit():
-            continue
-        group = a.find_parent("li")
-        sub = group.select_one(".etc_info span:last-child")
-        title = a.get_text(" ", strip=True)
-        if sub:
-            sub_title = sub.get_text(" ", strip=True).removeprefix("사업공고명").strip()
-            if sub_title and sub_title != title:
-                title += f" · {sub_title}"
-        rows.append(record("iris", ":".join(args[i] for i in (0, 2, 3)), title,
-                           params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]),
-                           "rnd", deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
+    rows, seen = [], set()
+    # The open-call list shows ten items a page; read every page until no new item appears.
+    for page_no in range(1, 21):
+        added = 0
+        for a in page(get, "iris", params(url, pageIndex=page_no)).select('a[onclick^="f_bsnsAncmListForm_view("]'):
+            args = re.findall(r"'([^']*)'", a["onclick"])
+            if len(args) < 7 or not args[0].isdigit():
+                continue
+            key = ":".join(args[i] for i in (0, 2, 3))
+            if key in seen:
+                continue
+            seen.add(key)
+            added += 1
+            group = a.find_parent("li")
+            sub = group.select_one(".etc_info span:last-child") if group else None
+            title = a.get_text(" ", strip=True)
+            if sub:
+                sub_title = sub.get_text(" ", strip=True).removeprefix("사업공고명").strip()
+                if sub_title and sub_title != title:
+                    title += f" · {sub_title}"
+            rows.append(record("iris", key, title, params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]),
+                               "rnd", deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
+        if not added:
+            break
     # Government R&D is open to every industry unless the notice names another one.
     return [row for row in require(rows) if judge(row["title"])[0]]
 

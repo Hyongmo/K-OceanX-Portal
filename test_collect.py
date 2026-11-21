@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from unittest.mock import patch
 
@@ -6,7 +7,7 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    drop_hub_duplicates, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
+    drop_hub_duplicates, iris, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
@@ -27,6 +28,7 @@ class TargetRulesTest(unittest.TestCase):
             ("해외 저작권 바우처 사업 수행기관 모집", False, "기업지원 아님"),
             ("서천 해양 블루바이오 예비창업자 지원", True, "해양 특화"),
             ("(부산센터) 2026년 제10회 제대군인 창업 워크숍 개최 안내", False, "개인 대상"),
+            ("2026년 범부처 통합연구지원시스템 운영지원사업 신규과제 공모", False, "기업지원 아님"),
             ("[울산] 2026년 미래내일 일경험 인턴형 참여기업 모집 공고", True, "업종 무관"),
             ("[충북] 2026년 2차 미취업청년 취업연계 일경험 지원사업 참여기업 모집", True, "업종 무관"),
         ]
@@ -64,6 +66,20 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(sector_profile("수출 지원", "도내 중소 수출(예정) 제조기업"), {"manufacturing": True})
         self.assertEqual(sector_profile("육성자금", "제조업, 지식서비스업 중소기업"), {})
         self.assertTrue(sector_profile("중소기업 기술혁신개발사업 공고")["open_rnd"])
+        self.assertTrue(sector_profile("투ㆍ융자 연계 기술개발사업(스케일업 팁스)")["open_rnd"])
+        self.assertTrue(sector_profile("[대구] 2026년 R&D 과제 발굴 및 기획 지원 공고")["open_rnd"])
+        self.assertNotIn("open_rnd", sector_profile("소재부품장비 양산성능평가지원사업"))
+
+    def test_support_type_prefers_title_over_official_field(self):
+        entry = record("bizinfo", "PBLN_1", "[부산] 서구 2026년 수산식품 가공설비 지원사업 추가 사업자 모집 공고",
+                       "https://www.bizinfo.go.kr/x", "support", eligibility="수산물 가공 및 수출업체",
+                       support_hints={"types": ["management"]})
+        classify_support(entry)
+        self.assertEqual(entry["support"]["types"], ["infrastructure"])
+        entry = record("bizinfo", "PBLN_2", "2026년 중소기업제품 전용판매장 참여기업 모집 공고",
+                       "https://www.bizinfo.go.kr/y", "support", topic="해외 관광객 대상 판매", support_hints={"types": ["commercial"]})
+        classify_support(entry)
+        self.assertEqual(entry["support"]["types"], ["commercial"])
 
     def test_age_bands_follow_the_startup_act(self):
         self.assertEqual(age_bands("예비창업자 대상 교육"), ["prestartup"])
@@ -147,6 +163,23 @@ class OfficialApiTest(unittest.TestCase):
             rows = bizinfo_api(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
         self.assertEqual([row.get("period_note") for row in rows], ["예산 소진 시까지", "상시 접수", None])
         self.assertEqual(period_note("2026-11-16 ~ 2026-12-11"), "")
+
+    def test_iris_reads_every_list_page(self):
+        def item(number, title):
+            return (f'<li><a onclick="f_bsnsAncmListForm_view(\'{number}\',\'x\',\'{number}\',\'1\',\'a\',\'b\','
+                    f'\'2026/12/01\')">{title}</a></li>')
+        pages = {1: item(1, "2026년 A 기술개발사업 공고") + item(2, "2026년 B 기술개발사업 공고"),
+                 2: item(3, "2026년 C 기술개발사업 공고"), 3: ""}
+        calls = []
+
+        def get(name, url):
+            number = int(re.search(r"pageIndex=(\d+)", url)[1])
+            calls.append(number)
+            return f"<ul>{pages.get(number, '')}</ul>".encode()
+
+        rows = iris(get)
+        self.assertEqual([row["title"][6:7] for row in rows], ["A", "B", "C"])
+        self.assertEqual(calls, [1, 2, 3])
 
     def test_stated_target_reads_the_line_after_the_first_marker(self):
         self.assertEqual(stated_target("개요입니다. ☞ 관내 수산식품기업 ☞ 포장재 지원"), "관내 수산식품기업")
