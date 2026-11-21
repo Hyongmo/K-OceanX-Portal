@@ -21,7 +21,7 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import judge, sector_profile
+from target_rules import AGE_BANDS, age_bands, judge, sector_profile
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -655,9 +655,17 @@ def kstartup_stages(value):
         stages.add("prestartup")
     if re.search(r"(?<!\d)[123]년\s*미만", value or ""):
         stages.add("early")
-    if re.search(r"(?:5|7|10)년\s*(?:미만|이상)", value or ""):
-        stages.add("scaleup")
     return sorted(stages)
+
+
+# K-Startup lists the company age buckets a notice accepts, such as "예비창업자,1년미만,3년미만,7년미만".
+KSTARTUP_AGES = {"예비": "prestartup", "1년미만": "y0_3", "2년미만": "y0_3", "3년미만": "y0_3",
+                 "5년미만": "y3_7", "7년미만": "y3_7", "10년미만": "y7_10", "10년이상": "y10_plus"}
+
+
+def kstartup_ages(value):
+    bands = {band for word, band in KSTARTUP_AGES.items() if word in re.sub(r"\s+", "", value or "")}
+    return [] if set(AGE_BANDS) <= bands else [band for band in AGE_BANDS if band in bands]
 
 
 def tally(source, counts, kept):
@@ -698,6 +706,7 @@ def kstartup_api(get, key):
             rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
                                "support", opens=opens, deadline=deadline, deadline_time=clock,
                                publisher=organizer, eligibility=shorten(item.get("aply_trgt_ctnt")),
+                               ages=kstartup_ages(clean(item.get("biz_enyy"))),
                                maritime=label == "해양 특화", support_hints=hints))
         total = int(data.get("totalCount") or 0)
         if not items or page_no * 100 >= total:
@@ -1188,6 +1197,10 @@ def build(samples):
         if entry["category"] in ("support", "rnd"):
             entry.update(sector_profile(entry["title"], entry.get("eligibility", ""), entry.get("publisher", ""),
                                         entry["source"]))
+            if "ages" not in entry:
+                bands = age_bands(f"{entry['title']} {entry.get('eligibility', '')}")
+                if bands:
+                    entry["ages"] = bands
     merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)

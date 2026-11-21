@@ -6,11 +6,11 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
+    drop_hub_duplicates, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
-from target_rules import judge, sector_profile
+from target_rules import age_bands, judge, sector_profile
 
 
 class TargetRulesTest(unittest.TestCase):
@@ -65,6 +65,17 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(sector_profile("육성자금", "제조업, 지식서비스업 중소기업"), {})
         self.assertTrue(sector_profile("중소기업 기술혁신개발사업 공고")["open_rnd"])
 
+    def test_age_bands_follow_the_startup_act(self):
+        self.assertEqual(age_bands("예비창업자 대상 교육"), ["prestartup"])
+        self.assertEqual(age_bands("예비·초기창업자 모집"), ["prestartup", "y0_3"])
+        self.assertEqual(age_bands("창업 7년 이내 법인"), ["y0_3", "y3_7"])
+        self.assertEqual(age_bands("창업 후 10년 이내 신산업 기업"), ["y0_3", "y3_7", "y7_10"])
+        self.assertEqual(age_bands("업력 3년 이상 기업"), ["y3_7", "y7_10", "y10_plus"])
+        self.assertEqual(age_bands("관내 창업기업"), ["y0_3", "y3_7"])
+        self.assertEqual(age_bands("중소기업 및 창업기업"), [])
+        self.assertEqual(age_bands("중소기업"), [])
+        self.assertEqual(age_bands("디자인기업 및 디자인 활용 기업(중소기업) - 디자인관련 예비창업자"), [])
+
     def test_small_merchant_target_is_dropped_unless_companies_qualify(self):
         self.assertEqual(judge("배달 홍보 지원", target="소상공인")[0], False)
         self.assertEqual(judge("홍보 지원", target="중소기업, 소상공인")[0], True)
@@ -98,6 +109,9 @@ class OfficialApiTest(unittest.TestCase):
         self.assertEqual(row["id"], "kstartup:179815")
         self.assertTrue(row["url"].startswith("https://www.k-startup.go.kr/"))
         self.assertEqual((row["opens"], row["deadline"]), ("2026-11-16", "2026-12-18"))
+        self.assertEqual(row["ages"], ["y0_3", "y3_7"])
+        self.assertEqual(kstartup_ages("예비창업자,1년미만,3년미만,5년미만,7년미만,10년미만,10년이상"), [])
+        self.assertEqual(kstartup_ages("10년이상"), ["y10_plus"])
         self.assertEqual(row["publisher"], "(주)시리즈벤처스")
         self.assertEqual(row["support"]["regions"], ["부산"])
         self.assertIn("scaleup", row["support"]["stages"])

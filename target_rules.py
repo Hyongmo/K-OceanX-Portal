@@ -158,3 +158,35 @@ def sector_profile(title, target="", organizer="", source=""):
     if OPEN_RND.search(title):
         profile["open_rnd"] = True
     return profile
+
+
+# Company age bands follow the SME Startup Support Act: a startup is a company
+# within 7 years of opening, an early startup within 3 years, and new-industry
+# startups may be supported up to 10 years.
+AGE_BANDS = ("prestartup", "y0_3", "y3_7", "y7_10", "y10_plus")
+_BAND_RANGES = {"y0_3": (0, 3), "y3_7": (3, 7), "y7_10": (7, 10), "y10_plus": (10, 99)}
+
+
+def age_bands(text):
+    """Return the company age bands a notice is limited to, or [] when it names none."""
+    text = text or ""
+    bands = set()
+    if re.search(r"예비\s*(?:청년\s*)?창업|예비\s*[,·ㆍ/]\s*(?:초기|창업)", text):
+        bands.add("prestartup")
+    if re.search(r"초기\s*창업", text):
+        bands.add("y0_3")
+    for number, bound in re.findall(r"(?:창업|업력|설립|개업)\s*(?:후\s*)?(\d{1,2})\s*년\s*(이내|이하|미만|이상|초과)", text):
+        years = int(number)
+        if bound in ("이상", "초과"):
+            bands.update(band for band, (_, upper) in _BAND_RANGES.items() if upper > years)
+        else:
+            bands.update(band for band, (lower, _) in _BAND_RANGES.items() if lower < years)
+    if not bands.difference({"prestartup"}) and re.search(r"(?<!예비)창업\s*기업", text) and \
+            not re.search(r"중소\s*기업|중견|기업\s*누구나|모든\s*기업", text):
+        bands.update(("y0_3", "y3_7"))
+    # "디자인기업(중소기업) - 예비창업자, 디자이너" also admits running companies.
+    if bands == {"prestartup"} and re.search(r"중소\s*기업|기업\s*및|및\s*기업", text):
+        return []
+    if set(AGE_BANDS) <= bands:
+        return []
+    return [band for band in AGE_BANDS if band in bands]
