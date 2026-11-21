@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&amp;family=Noto+Serif+KR:wght@700;900&amp;display=swap">
-  <link rel="stylesheet" href="./portal.css?v=22">
+  <link rel="stylesheet" href="./portal.css?v=24">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -42,38 +42,78 @@
         <p class="page-meta" id="support-meta">정보를 불러오는 중입니다.</p>
       </div>
 
-      <div class="condition">
-        <select id="region" aria-label="회사 소재지"></select>
-        <span>소재,</span>
-        <select id="age" aria-label="업력">
-          <option value="">업력 무관</option>
-          <option value="prestartup">예비창업</option>
-          <option value="early">창업 3년 이내</option>
-          <option value="scaleup">창업 3~10년</option>
-        </select>
-        <span>기업이 신청할 수 있는</span>
-        <select id="benefit" aria-label="받는 것"></select>
+      <div class="mode-bar">
+        <div class="mode-switch" role="group" aria-label="보기 방식">
+          <button type="button" data-mode="mine" aria-pressed="true">우리 회사 맞춤</button>
+          <button type="button" data-mode="all" aria-pressed="false">전체 공고 보기</button>
+        </div>
         <label class="search">
           <span>검색</span>
-          <input id="query" type="search" placeholder="사업명·기관·키워드 (예: 스마트항만, 수출, GPU)" autocomplete="off">
+          <input id="query" type="search" placeholder="사업명·기관·키워드 (예: 스마트양식, 수출, GPU)" autocomplete="off">
         </label>
       </div>
 
-      <div class="status-row">
+      <div id="finder-mode">
+        <div class="company">
+          <p class="step">1 · 우리 회사</p>
+          <p class="axis">업종 <small>여러 개 고를 수 있음 · 해양수산업 특수분류 9대 분류</small></p>
+          <div class="chips" id="industries" role="group" aria-label="업종"></div>
+          <details class="tech-panel" id="tech-panel">
+            <summary>기술 분야도 고르기 <small>(선택)</small><span id="tech-count"></span></summary>
+            <p class="axis">해양수산 기술 <small>해양수산과학기술 분류 13대 분류</small></p>
+            <div class="chips small" id="marine-tech" role="group" aria-label="해양수산 기술"></div>
+            <p class="axis">혁신기술 <small>중소벤처기업부 12대 신산업</small></p>
+            <div class="chips small" id="innovation" role="group" aria-label="혁신기술"></div>
+          </details>
+          <div class="company-row">
+            <label>소재지 <select id="region"></select></label>
+            <label>업력 <select id="age">
+              <option value="">업력 무관</option>
+              <option value="prestartup">예비창업</option>
+              <option value="early">창업 3년 이내</option>
+              <option value="scaleup">창업 3~10년</option>
+            </select></label>
+          </div>
+          <p class="finder-summary" id="finder-summary" role="status"></p>
+          <p class="finder-excluded" id="finder-excluded"></p>
+        </div>
+
+        <div class="finder-block">
+          <p class="step">2 · 우리 회사를 위한 공고</p>
+          <h3 class="finder-title" id="mine-title"></h3>
+          <p class="finder-note" id="mine-note"></p>
+          <ol class="plain-list finder-list" id="mine-list"></ol>
+        </div>
+
+        <div class="finder-block">
+          <p class="step">3 · 받을 수 있는 것</p>
+          <h3 class="finder-title">분야 제한 없이 신청할 수 있는 지원</h3>
+          <p class="finder-note">업종을 가리지 않는 공고입니다. 받고 싶은 것을 고르세요.</p>
+          <div class="benefit-cards" id="benefit-cards" role="group" aria-label="받을 수 있는 것"></div>
+          <ol class="plain-list finder-list" id="open-list"></ol>
+          <button type="button" class="more" id="more" hidden>더 보기</button>
+          <details class="check-list" id="check-wrap" hidden>
+            <summary id="check-summary"></summary>
+            <ol class="plain-list finder-list" id="check-list"></ol>
+          </details>
+        </div>
+      </div>
+
+      <div id="all-mode" hidden>
+        <div class="all-filters">
+          <select id="all-region" aria-label="지역"></select>
+          <select id="all-benefit" aria-label="받을 수 있는 것"></select>
+          <select id="all-industry" aria-label="업종"></select>
+          <select id="all-tech" aria-label="기술"></select>
+        </div>
         <div class="status-tabs" role="group" aria-label="신청 상태">
           <button type="button" data-status="open" aria-pressed="true">접수 중 <span></span></button>
           <button type="button" data-status="undated" aria-pressed="false">상시·기간 미정 <span></span></button>
           <button type="button" data-status="closed" aria-pressed="false">마감 <span></span></button>
         </div>
-        <p class="status-note" id="excluded-note" role="status"></p>
+        <ol class="plain-list finder-list" id="all-list"></ol>
+        <button type="button" class="more" id="all-more" hidden>더 보기</button>
       </div>
-      <p class="preset"><button type="button" id="preset-koceanx">K-OceanX 입주기업 기준(부산 소재)으로 보기</button> <label class="maritime-only"><input type="checkbox" id="maritime-only"> 해양수산 특화 공고만</label></p>
-
-      <div class="notice-head" aria-hidden="true">
-        <span>마감</span><span>받는 것</span><span>지원사업 · 지원기관</span><span id="eligibility-head">신청 자격</span>
-      </div>
-      <div id="notice-groups"></div>
-      <button type="button" class="more" id="more" hidden>더 보기</button>
     </section>
 
     <section id="view-events" class="view" aria-labelledby="events-title" hidden>

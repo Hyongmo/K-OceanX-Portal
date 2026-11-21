@@ -6,11 +6,11 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields,
+    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
-from target_rules import judge
+from target_rules import judge, sector_profile
 
 
 class TargetRulesTest(unittest.TestCase):
@@ -33,6 +33,37 @@ class TargetRulesTest(unittest.TestCase):
         for title, keep, label in cases:
             with self.subTest(title=title):
                 self.assertEqual(judge(title), (keep, label))
+
+    def test_stated_target_drops_farmer_and_fisher_only_programs(self):
+        self.assertEqual(judge("과수 고품질 시설현대화사업", stated="농업경영정보 등록한 농업인 - 농업법인"),
+                         (False, "농업인 대상"))
+        self.assertEqual(judge("농특산물 TV홈쇼핑 지원", stated="관내 농가 및 농식품 가공업체")[0], True)
+        self.assertEqual(judge("친환경 에너지절감장비 보급", stated="연근해어업 허가를 받은 어업인"),
+                         (False, "어업인 개인 지원"))
+        self.assertEqual(judge("수산물 직거래 택배비 지원", stated="어업인, 어업법인 및 생산자단체")[0], True)
+
+    def test_sector_profile_reads_industries_from_title_target_and_source(self):
+        industries = lambda *args, **kwargs: sector_profile(*args, **kwargs).get("industries")
+        self.assertEqual(industries("수산식품 가공설비 지원사업"), ["fish_process"])
+        self.assertEqual(industries("포장재 지원", "관내 수산식품기업"), ["fish_process"])
+        self.assertEqual(industries("리스크안전망 구축", "수산물 수출입 업체(중소ㆍ중견기업)"), ["fish_trade"])
+        self.assertEqual(industries("수산 분야 청년 창업 지원"), ["fish_catch", "fish_process", "fish_trade"])
+        self.assertEqual(industries("어선사고 예방시스템 구축"), ["fish_catch"])
+        self.assertEqual(industries("창업기업 패키지 지원", source="komeri"), ["ship", "equipment"])
+        self.assertIsNone(industries("수출 경쟁력 강화", "수출실적분(선박, 항공)"))
+        self.assertIsNone(industries("K-푸드 콜드풀링", "", "한국농수산식품유통공사"))
+
+    def test_sector_profile_marks_technology_and_openness(self):
+        self.assertEqual(sector_profile("2026년 해양수산 연구장비 렌탈지원사업"),
+                         {"maritime_common": True, "marine_tech": ["m_infra"]})
+        profile = sector_profile("AI 완전자율운항선박 기술개발사업")
+        self.assertEqual((profile["marine_tech"], profile["innovation"]), (["m_engineering"], ["ai", "mobility"]))
+        self.assertEqual(sector_profile("첨단 GPU 활용 지원 사업")["innovation"], ["ai"])
+        self.assertNotIn("innovation", sector_profile("DAI 지원사업"))
+        self.assertEqual(sector_profile("수출 지원", "본사 또는 공장이 부산에 소재한 중소기업"), {})
+        self.assertEqual(sector_profile("수출 지원", "도내 중소 수출(예정) 제조기업"), {"manufacturing": True})
+        self.assertEqual(sector_profile("육성자금", "제조업, 지식서비스업 중소기업"), {})
+        self.assertTrue(sector_profile("중소기업 기술혁신개발사업 공고")["open_rnd"])
 
     def test_small_merchant_target_is_dropped_unless_companies_qualify(self):
         self.assertEqual(judge("배달 홍보 지원", target="소상공인")[0], False)
@@ -102,6 +133,10 @@ class OfficialApiTest(unittest.TestCase):
             rows = bizinfo_api(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
         self.assertEqual([row.get("period_note") for row in rows], ["예산 소진 시까지", "상시 접수", None])
         self.assertEqual(period_note("2026-11-16 ~ 2026-12-11"), "")
+
+    def test_stated_target_reads_the_line_after_the_first_marker(self):
+        self.assertEqual(stated_target("개요입니다. ☞ 관내 수산식품기업 ☞ 포장재 지원"), "관내 수산식품기업")
+        self.assertEqual(stated_target("요약만 있는 공고"), "")
 
     def test_bizinfo_events_drop_finished_events(self):
         items = [

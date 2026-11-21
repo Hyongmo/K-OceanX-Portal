@@ -21,7 +21,7 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import judge
+from target_rules import judge, sector_profile
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -592,6 +592,12 @@ def period_note(text):
     return shorten(re.sub(r"(소진|완료|마감)시", r"\1 시", text), 30)
 
 
+def stated_target(summary):
+    """Return the target line of a Bizinfo summary written as "개요 ☞ 대상 ☞ 지원내용"."""
+    parts = str(summary or "").split("☞")
+    return clean(parts[1]) if len(parts) > 2 else ""
+
+
 def date_range(text):
     """Return (first date, last date, last time) from an official period string."""
     found = []
@@ -713,7 +719,8 @@ def bizinfo_api(get, key):
         organizer = clean(item.get("excInsttNm"))
         if organizer in ("", "기초자치단체", "직접수행", "-"):
             organizer = clean(item.get("jrsdInsttNm"))  # placeholder values name no agency
-        keep, label = judge(title, organizer, clean(item.get("trgetNm")))
+        target = stated_target(item.get("bsnsSumryCn"))
+        keep, label = judge(title, organizer, clean(item.get("trgetNm")), target)
         if not keep:
             dropped[label] = dropped.get(label, 0) + 1
             continue
@@ -732,7 +739,8 @@ def bizinfo_api(get, key):
                            "rnd" if is_rnd else "support", published=iso(str(item.get("creatPnttm") or "")[:10]),
                            opens=opens, deadline=deadline, deadline_time=clock, publisher=organizer,
                            period_note="" if deadline else period_note(item.get("reqstBeginEndDe")),
-                           topic=shorten(item.get("bsnsSumryCn"), 140), eligibility=shorten(item.get("trgetNm"), 80),
+                           topic=shorten(item.get("bsnsSumryCn"), 140),
+                           eligibility=shorten(target or item.get("trgetNm"), 120),
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
                            maritime=label == "해양 특화", support_hints=hints))
@@ -1177,6 +1185,9 @@ def build(samples):
     for entry in records.values():
         classify_information(entry)
         classify_support(entry)
+        if entry["category"] in ("support", "rnd"):
+            entry.update(sector_profile(entry["title"], entry.get("eligibility", ""), entry.get("publisher", ""),
+                                        entry["source"]))
     merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
