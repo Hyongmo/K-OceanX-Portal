@@ -23,11 +23,12 @@ NOT_SUPPORT = re.compile(
 INDIVIDUAL_FISHERS = re.compile(r"직불|직접\s*지불|어촌\s*정착|어업인|어업\s*활동|건강\s*검진|영어\s*정착|농어촌\s*민박|귀어|생계")
 INDIVIDUALS = re.compile(r"제대\s*군인|장병|구직자|미취업자|대학생|청소년|어르신")
 FARMERS = re.compile(r"농업인|농업\s*법인|농가|농업\s*경영체|임업인|축산")
-COMPANIES = re.compile(r"기업|업체|사업자|소공인|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업")
+COMPANIES = re.compile(r"기업|업체|사업자|소공인|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업(?!인)")
 # Farm products and farm-food firms; fisheries words other than inside 농수산·농축수산 keep a notice.
 FARM_TARGET = re.compile(r"농업인|농업\s*(?:회사\s*)?법인|영농|농협|농가|작목반|농식품|농특산물|농림축산|농산물|농축산물")
 FOOD_LODGING = re.compile(r"음식점|맛집|멋집|식품\s*안심|안심\s*(?:식당|업소)|모범\s*음식|제과점|숙박\s*(?:업|시설)|민박|게스트\s*하우스")
-FISHERY_WORD = re.compile(r"(?<!농)(?<!축)(?<!림)수산|(?<!농)어업|어촌|양식|해양")
+# "어업인" names individual fishers, who are out of scope, so it does not keep a farm program.
+FISHERY_WORD = re.compile(r"(?<!농)(?<!축)(?<!림)수산|(?<!농)어업(?!인)|어촌|양식|해양")
 # Company words not tied to farm products ("관내 기업체", "기업ㆍ농가", "제조업") keep a notice open.
 OPEN_LIST = re.compile(r"공산품|제조업|중소\s*기업|(?<![가-힣])기업(?:체|[ㆍ·,\s])|모든\s*(?:기업|업종)|누구나|업종\s*(?:무관|제한\s*없)")
 # Clauses that name who is left out, such as "(※순수 수산물 수출업체 제외)".
@@ -101,9 +102,12 @@ TARGET_INDUSTRIES = {
     "fish_catch": r"(?<!농)어업\s*(?:기업|업체|법인|경영체)|어업인|어촌계|양식\s*(?:업|어업|장)",
     "fish_process": r"(?<!농)(?<!축)(?<!림)수산(?:물)?\s*(?:가공|식품)|가공\s*업자",
     "fish_trade": r"(?<!농)(?<!축)(?<!림)수산물\s*(?:유통|수출|수출입|판매)",
-    "ship": r"(?:조선|선박)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|협력사|사업자)",
+    "ship": r"(?:조선|선박)\s?[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|협력사|사업자)|조선소|수리\s*조선",
     "equipment": r"기자재[^\s,·ㆍ()]{0,6}(?:기업|업체|업자)",
-    "port": r"(?:해운|항만)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|사업자)|(?:해운|외항|국적)\s*선사",
+    "port": r"(?:해운|항만)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|사업자)|(?:해운|외항|국적)\s*선사|"
+            r"외항\s*화물\s*운송|「?해운법」?\s*상",
+    "leisure": r"크루즈\s*(?:선사|관광|여행)|마리나\s*(?:업|사업자)|요트\s*(?:업|사업자)",
+    "resource": r"해상\s*풍력|해양\s*(?:에너지|플랜트)\s?[^\s,·ㆍ()]{0,6}(?:기업|사업자)",
 }
 
 # Ocean and fisheries technology follows the 13 top-level classes of the ocean and
@@ -140,7 +144,7 @@ INNOVATION = {
     "energy": r"에너지|수소|원자력|원전|핵융합|해상\s*풍력|태양광|이차\s*전지|배터리",
     "advanced_manufacturing": r"첨단\s*제조|스마트\s*(?:공장|제조)|센서|자율\s*제조|(?<![A-Za-z])AI\s*팩토리|3D\s*프린팅|디지털\s*트윈",
 }
-MARITIME_COMMON = re.compile(r"해양|(?<!농)수산|바다|블루\s*(?:이코노미|테크|바이오)|오션|ocean|marine|maritime", re.I)
+MARITIME_COMMON = re.compile(r"해양|(?<!농)(?<!축)(?<!림)수산|바다|블루\s*(?:이코노미|테크|바이오)|오션|ocean|marine|maritime", re.I)
 MANUFACTURING = re.compile(r"스마트\s*공장|제조\s*(?:기업|업|혁신|현장|AI|데이터)|공장|뿌리\s*(?:산업|기업)|금형|소공인")
 # A stated target counts as manufacturing only when it asks for manufacturers and
 # names no other kind of business; "본사 또는 공장" only says where a company sits.
@@ -169,6 +173,45 @@ def tech_only(target):
     return keys if len(keys) <= 2 else []
 
 
+# Trades outside ocean and fisheries named in a target line. Food makers include seafood
+# processors and a list naming 조선 includes shipbuilders, so those count for that maritime
+# industry. Machinery, metal and root-industry makers, logistics and energy firms may or may
+# not be maritime, so they neither limit nor exclude a notice.
+COMPANY_TAIL = r"(?:\([^()]{0,20}\))?[^,.\n()]{0,12}?(?:기업|업체|제작사|사업자|사업체|협력사|업종|산업|제조사)"
+OVERLAPPING_TRADES = {
+    "ship": r"조선(?!일보|대학|대)",
+    "fish_process": r"(?<!농)(?<![농ㆍ·]\s)(?<!건강기능)(?<!기능성)식품",
+}
+MIXED_TRADES = re.compile(r"(?:기계|금속|뿌리|물류|에너지|조선\s*기자재)" + COMPANY_TAIL)
+OTHER_TRADES = re.compile(r"(?:철강|전장\s*부품|석유\s*화학|자동차|미래\s*차|전기\s*차|이차\s*전지|배터리|반도체|디스플레이|화장품|"
+                          r"뷰티|바이오\s*헬스|의약품?|의료\s*기기|콘텐츠|문화\s*산업|게임|방송\s*(?:사|제작)|영상물|방산|항공|우주|섬유|패션)"
+                          + COMPANY_TAIL)
+
+
+# Lines that open a notice beyond the trades they name: "제조업 등 11개 업종", "중소기업 또는 …".
+# When in doubt a notice is kept, so lists that also admit ventures, young startups, firms in
+# transition or "주력산업" in general, and lines that only give examples, do not exclude it.
+WIDE_TARGET = re.compile(r"공산품|제조업\s*(?:전반|등)|\d+\s*개\s*업종|중소\s*기업\s*(?:및|,|또는)|또는\s*[^,.\n]{0,10}중소\s*기업|"
+                         r"모든\s*(?:기업|업종)|누구나|벤처\s*기업|이노비즈|메인비즈|청년\s*창업|디지털\s*전환|산업\s*전환|"
+                         r"탄소\s*배출\s*업종|주력\s*산업|예시|BIG\s*3")
+
+
+def overlapping_industries(target):
+    """Maritime industries reached through another trade named in a target line."""
+    return {key for key, word in OVERLAPPING_TRADES.items() if re.search(f"(?:{word}){COMPANY_TAIL}", target or "")}
+
+
+def other_trades_only(target):
+    """True when a target line limits applicants to trades no maritime company belongs to,
+    e.g. "철강산업 및 전ㆍ후방 기업", "문화콘텐츠 제작사"."""
+    kept = EXCLUDED_CLAUSE.sub(" ", target or "")
+    if not OTHER_TRADES.search(kept) or WIDE_TARGET.search(kept) or OPEN_TARGET.search(kept):
+        return False
+    return not (_keys(TARGET_INDUSTRIES, kept) or overlapping_industries(kept) or MIXED_TRADES.search(kept) or
+                MARITIME_COMMON.search(kept) or SEA_TRADES.search(kept))
+
+
+SEA_TRADES = re.compile(r"선박|조선(?!일보|대학|대)|항만|해운|(?<![가-힣])선사|크루즈|해상\s*풍력|쇄빙|함정")
 OPEN_TARGET = re.compile(r"누구나|모든\s*기업|업종\s*(?:무관|제한\s*없)")
 BROAD_MARITIME_TARGET = re.compile(r"해양수산\s*(?:산업|기업|분야)[^.\n]{0,20}(?:전\s*[ㆍ·]?\s*후방|연관)|"
                                    r"해양수산\s*(?:관련\s*)?(?:모든|전체)\s*(?:기업|분야)")
@@ -181,30 +224,37 @@ def _industries(table, text):
     return industries
 
 
-def sector_profile(title, target=""):
-    """Return the industries a notice is meant for and the technologies it concerns, read from its
-    title and stated target only; who publishes it does not count."""
-    # The stated target line decides who may apply. Industry words in the title only say
-    # what a notice is about, so they decide only when the target line names no one.
+def sector_profile(title, target="", content=""):
+    """Return the industries a notice is meant for and the technologies it concerns.
+
+    Who may apply is read from the notice's content: the stated target line first, then the
+    rest of the notice text. The title decides only for a notice that carries no content.
+    Who publishes it never counts."""
     kept = EXCLUDED_CLAUSE.sub(" ", target or "")
-    title_industries = _industries(INDUSTRIES, title)
-    target_industries = _industries(TARGET_INDUSTRIES, kept)
+    body = EXCLUDED_CLAUSE.sub(" ", content or "")
+    has_content = bool(kept.strip() or body.strip())
     if OPEN_TARGET.search(kept) or BROAD_MARITIME_TARGET.search(kept):
         industries = set()
-    elif target_industries:
-        industries = target_industries
     else:
-        industries = title_industries
+        # In the wider notice text a lone "수산" may be a passing mention, so only target-style
+        # phrases ("수산식품 가공업체", "조선 협력사") count there.
+        industries = (_industries(TARGET_INDUSTRIES, kept) | overlapping_industries(kept)) or \
+            set(_keys(TARGET_INDUSTRIES, body))
+        if not industries and not has_content:
+            industries = _industries(INDUSTRIES, title)
     profile = {}
     if industries:
         profile["industries"] = [key for key in INDUSTRIES if key in industries]
-    elif MARITIME_COMMON.search(f"{title} {kept}") or BROAD_MARITIME_TARGET.search(kept):
+    elif BROAD_MARITIME_TARGET.search(kept) or MARITIME_COMMON.search(f"{title} {kept} {body}") or \
+            SEA_TRADES.search(f"{title} {kept}"):
+        # Tagging a notice as maritime limits no one, so its title counts here as well.
         profile["maritime_common"] = True
     for field, table in (("marine_tech", MARINE_TECH), ("innovation", INNOVATION)):
         keys = _keys(table, title)
         if keys:
             profile[field] = keys
-    if MANUFACTURING.search(title) or (TARGET_MANUFACTURING.search(target or "") and not OTHER_BUSINESS.search(target or "")):
+    if (TARGET_MANUFACTURING.search(kept) and not OTHER_BUSINESS.search(kept)) or \
+            (not has_content and MANUFACTURING.search(title)):
         profile["manufacturing"] = True
     limited = tech_only(target)
     if limited:

@@ -7,11 +7,11 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    city_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
+    city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
-from target_rules import age_bands, judge, sector_profile, tech_only
+from target_rules import age_bands, judge, other_trades_only, sector_profile, tech_only
 
 
 class TargetRulesTest(unittest.TestCase):
@@ -52,6 +52,8 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(judge("수출 조사", stated="농식품(신선농산물 및 가공농산물) 수출기업 및 농가"),
                          (False, "농업·농식품 대상"))
         self.assertEqual(judge("착한가격업소 신규지정 모집"), (False, "소상공인 대상"))
+        self.assertEqual(judge("충주시 농업안정기금 이자차액 지원사업", stated="충주시에 주소를 둔 농ㆍ어업인, 생산자단체 및 농업법인")[0],
+                         False)
         self.assertEqual(judge("창업경진대회 왕중왕전 청중평가단 모집"), (False, "기업지원 아님"))
         self.assertEqual(judge("친환경 에너지절감장비 보급", stated="연근해어업 허가를 받은 어업인"),
                          (False, "어업인 개인 지원"))
@@ -102,6 +104,33 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(city_regions("고성군 중소기업"), [])
         self.assertEqual(region_hint("블루바이오 예비창업자 지원", "소재지 : 서천군 및 타지역 거주(재직) 또는 창업 예정자"), ["전국"])
 
+    def test_content_comes_before_the_title(self):
+        target = "제주특별자치도 이외 지역의 국제화물을 제주항을 경유하여 수출하는 화주 및 국제물류주선업자, 선사"
+        self.assertEqual(region_hint("2026년 제주항 화물유치 지원사업 참여업체 모집", target, ["제주"]), ["전국"])
+        self.assertEqual(region_hint("스마트공장 지원", "중소기업", (), "개요 ☞ 부산광역시 소재 제조기업 ☞ 지원"), ["부산"])
+        self.assertEqual(region_hint("2026년 광명시 투자유치 보조금"), ["경기"])
+        self.assertEqual(region_hint("수출 상담회", "", ["울산"]), ["울산"])
+        self.assertEqual(content_regions("전북형 시범공장", "도내 제조기업"), [])
+        self.assertNotIn("manufacturing", sector_profile("수출 제조기업 지원", "관내 중소기업"))
+
+    def test_trades_outside_ocean_and_fisheries(self):
+        for target in ("당진시 소재 철강산업 및 전ㆍ후방 기업", "여수국가산업단지에 위치한 석유화학 관련 업종",
+                       "재사용 배터리를 활용하는 이차전지산업 관련 기업", "문화콘텐츠 제작사(문화산업전문회사 제외)",
+                       "자동차부품기업", "우주ㆍ항공ㆍ방산 분야 중소ㆍ중견 제조기업", "국내 중소ㆍ중견 전장부품 기업",
+                       "이차전지 관련 전ㆍ후방 기업 - 이차전지 소재ㆍ부품 관련 기업"):
+            with self.subTest(target=target):
+                self.assertTrue(other_trades_only(target))
+        for target in ("기계ㆍ조선ㆍ자동차 업종 기업", "경상남도 소재 식품 및 화장품 기업", "관내 중소기업",
+                       "제조, 건설 등 11개 업종에 해당하는 중소ㆍ중견기업", "기계ㆍ부품ㆍ철강산업 제조기업"):
+            with self.subTest(target=target):
+                self.assertFalse(other_trades_only(target))
+        industries = lambda target: sector_profile("지원사업", target).get("industries")
+        self.assertEqual(industries("경상남도 소재 식품 및 화장품 기업"), ["fish_process"])
+        self.assertIsNone(industries("기계ㆍ부품ㆍ철강산업 제조기업"))
+        self.assertIsNone(industries("에너지 관련 기업 및 대학ㆍ연구기관"))
+        self.assertIsNone(industries("중소기업, 유통ㆍ무역회사 - 해외 물류비"))
+        self.assertEqual(industries("기계ㆍ조선ㆍ자동차 업종 기업"), ["ship"])
+
     def test_food_and_lodging_programs_are_left_out(self):
         self.assertEqual(judge("함안 맛집ㆍ멋집 지정 신청 공고"), (False, "음식점·숙박 대상"))
         self.assertEqual(judge("2차 식품안심업소 인센티브 지원 공고"), (False, "음식점·숙박 대상"))
@@ -120,10 +149,17 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(profile, {"maritime_common": True})
         self.assertIsNone(industries("한국농수산식품유통공사(aT) 안전성 검사비 지원사업", "농식품 수출업체"))
         self.assertIsNone(industries("지역 상품 발굴 코칭", "공산품 및 농축수산물의 가공품 한정"))
-        self.assertEqual(industries("수산식품 가공설비 지원사업", "관내 중소기업"), ["fish_process"])
+        # The notice's content decides; the title counts only when there is no content.
+        self.assertIsNone(industries("수산식품 가공설비 지원사업", "관내 중소기업"))
+        self.assertEqual(industries("가공설비 지원사업", "관내 중소기업", "관내 수산식품 가공업체의 설비 개선을 지원"),
+                         ["fish_process"])
+        self.assertEqual(industries("수산식품 가공설비 지원사업"), ["fish_process"])
         self.assertEqual(industries("수출 지원", "수산물 수출입 업체(중소ㆍ중견기업)"), ["fish_trade"])
-        self.assertEqual(industries("제주항 화물유치 지원사업",
-                                    "화주 및 국제물류주선업자, 선사 - 대상품목 : 농림수산물, 생활용품 등 모든 수출품"), ["port"])
+        # Shippers of any trade may apply, so the program is not limited to one industry.
+        self.assertEqual(sector_profile("제주항 화물유치 지원사업",
+                                        "화주 및 국제물류주선업자, 선사 - 대상품목 : 농림수산물, 생활용품 등 모든 수출품"),
+                         {"maritime_common": True})
+        self.assertNotIn("maritime_common", sector_profile("기업환경 개선사업 참여기업 모집", "관내 중소기업"))
 
     def test_research_infrastructure_needs_equipment_words(self):
         self.assertNotIn("marine_tech", sector_profile("2026년도 해양수산 R&D사업 기술수요조사 공고 안내"))

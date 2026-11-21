@@ -21,7 +21,7 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, sector_profile
+from target_rules import AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, other_trades_only, sector_profile
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -676,24 +676,27 @@ def city_regions(text):
 def stated_regions(text):
     """Regions a target line limits applicants to, e.g. "부산 소재", "서울시에 본사", "부산ㆍ울산ㆍ경남 소재"."""
     found = set()
-    for group in re.findall(rf"((?:{REGION_NAMES})(?:\s*[ㆍ·,/]\s*(?:{REGION_NAMES}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
+    places = f"{REGION_NAMES}|{CITY_NAMES}"
+    for group in re.findall(rf"((?:{places})(?:\s*[ㆍ·,/]\s*(?:{places}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
                             r"(?:소재|관내|에\s*(?:본사|소재|사업장|주소)|사업장|본사|지역\s*(?:소재|기업|중소|중기업|소기업))",
                             text or ""):
-        for name in re.findall(REGION_NAMES, group):
-            found.add(LONG_REGIONS.get(name, name))
+        for name in re.findall(places, group):
+            found.add(CITY_TO_REGION.get(name) or LONG_REGIONS.get(name, name))
     return sorted(found)
 
 
-def content_regions(title, target=""):
-    """Regions read from a notice's own text: the title's [지역] prefix, the stated target
-    ("부산 소재", or a city such as "여수시 관내"; "전국" opens it), then a region or city named in the
-    title outside an organization's name."""
+def content_regions(title, target="", content=""):
+    """Regions a notice limits applicants to, read from its own content.
+
+    The title's [지역] label counts first, then the stated target ("부산 소재", "여수시 관내";
+    "전국" or "타지역" opens it), then the rest of the notice where a region comes with a cue
+    such as 소재·관내·본사. When the notice has content but names no region, the result is []
+    (no limit). Only a notice with no content at all is read from region names in its title."""
     prefix = re.match(r"\s*\[([^\]]+)\]", title or "")
     if prefix:
         names = [name for name in SHORT_REGIONS if name in prefix[1]]
         if names:
             return names
-    # "서천군 및 타지역 거주자", "지역 제한 없음": other regions are welcome too.
     if re.search(r"타\s*(?:지역|시\s*[·ㆍ]?\s*도)|지역\s*(?:제한\s*(?:없|무관)|무관)", target or ""):
         return ["전국"]
     stated = set(stated_regions(target)) | set(city_regions(target))
@@ -701,17 +704,23 @@ def content_regions(title, target=""):
         return sorted(stated)
     if re.search(r"(?<![가-힣])전국", target or ""):
         return ["전국"]
+    stated = stated_regions(content)
+    if stated:
+        return stated
+    if (target or "").strip() or (content or "").strip():
+        return []
     named = {LONG_REGIONS.get(name, name) for name in re.findall(rf"({REGION_NAMES})(?!{ORGANIZATION_TAIL})", title or "")}
     named.update(city_regions(title))
     return sorted(named) if 0 < len(named) <= 3 else []
 
 
-def region_hint(title, target="", tags=()):
-    """Regions for a Bizinfo notice from its own text, then its hashtags; otherwise nationwide.
-    The organizer's location does not count."""
-    named = content_regions(title, target)
-    if named:
-        return named
+def region_hint(title, target="", tags=(), content=""):
+    """Regions for a Bizinfo notice from its own content; nationwide when the content names none.
+    Hashtags (which often follow the publisher's location) count only for a notice without content.
+    The organizer's location never counts."""
+    named = content_regions(title, target, content)
+    if named or (target or "").strip() or (content or "").strip():
+        return named or ["전국"]
     tagged = {name for tag in tags for name in SHORT_REGIONS if tag in (name, "전남광주") and name in tag}
     return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
 
@@ -770,7 +779,8 @@ def kstartup_api(get, key):
                 dropped["마감"] = dropped.get("마감", 0) + 1
                 continue
             organizer = clean(item.get("pbanc_ntrp_nm"))
-            keep, label = judge(title, organizer, clean(item.get("aply_trgt")))
+            target = clean(item.get("aply_trgt_ctnt"))
+            keep, label = judge(title, organizer, clean(item.get("aply_trgt")), target)
             if not keep:
                 dropped[label] = dropped.get(label, 0) + 1
                 continue
@@ -784,7 +794,8 @@ def kstartup_api(get, key):
             hints["regions"] = kstartup_regions(clean(item.get("supt_regin")))
             rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
                                "support", opens=opens, deadline=deadline, deadline_time=clock,
-                               publisher=organizer, eligibility=shorten(item.get("aply_trgt_ctnt")),
+                               publisher=organizer, eligibility=shorten(target),
+                               target_full=target, content_full=clean(item.get("pbanc_ctnt")),
                                ages=kstartup_ages(clean(item.get("biz_enyy"))),
                                maritime=label == "해양 특화", support_hints=hints))
         total = int(data.get("totalCount") or 0)
@@ -818,7 +829,8 @@ def bizinfo_api(get, key):
             continue
         tags = [tag.strip() for tag in re.split(r"[,#]", item.get("hashtags") or "") if tag.strip()]
         is_rnd = bool(planning_type(title) or RND_TITLE.search(title)) and not NOT_RND_TITLE.search(title)
-        hints = {"regions": region_hint(title, target, tags)}
+        summary = clean(item.get("bsnsSumryCn"))
+        hints = {"regions": region_hint(title, target, tags, summary)}
         field = BIZINFO_FIELDS.get(clean(item.get("pldirSportRealmLclasCodeNm")))
         if field:
             hints["types"] = [field]
@@ -829,6 +841,7 @@ def bizinfo_api(get, key):
                            period_note="" if deadline else period_note(item.get("reqstBeginEndDe")),
                            topic=shorten(item.get("bsnsSumryCn"), 140),
                            eligibility=shorten(target or item.get("trgetNm"), 120),
+                           target_full=target or clean(item.get("trgetNm")), content_full=summary,
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
                            maritime=label == "해양 특화", support_hints=hints))
@@ -1273,20 +1286,31 @@ def build(samples):
     drop_hub_duplicates(records)
     # Every source, not only the hubs, leaves out notices that are not company support
     # (operator recruitment, service contracts, judges and the like).
+    # Notices whose target names only trades outside ocean and fisheries (철강, 석유화학, 콘텐츠 …)
+    # are left out too, read from the full target line.
     for key in [key for key, entry in records.items()
-                if entry["category"] in ("support", "rnd") and NOT_SUPPORT.search(entry["title"])]:
+                if entry["category"] in ("support", "rnd") and (
+                    NOT_SUPPORT.search(entry["title"]) or
+                    other_trades_only(entry.get("target_full") or entry.get("eligibility", "")))]:
         del records[key]
     for entry in records.values():
         classify_information(entry)
         classify_support(entry)
+        # Full target and notice text are read for judging and not published.
+        target = entry.pop("target_full", "") or entry.get("eligibility", "")
+        content = entry.pop("content_full", "")
         if entry["category"] in ("support", "rnd"):
-            entry.update(sector_profile(entry["title"], entry.get("eligibility", "")))
+            entry.update(sector_profile(entry["title"], target, content))
             # Sources other than the hubs carry no region field; their own target text may name one.
-            named = content_regions(entry["title"], entry.get("eligibility", ""))
+            named = content_regions(entry["title"], target, content)
+            if not named and (target or content).strip():
+                named = ["전국"]
             if named and not entry.get("support", {}).get("regions"):
                 entry.setdefault("support", {})["regions"] = named
             if "ages" not in entry:
-                bands = age_bands(f"{entry['title']} {entry.get('eligibility', '')}")
+                # The title is read only when the notice carries no content of its own.
+                text = f"{target} {content}" if (target or content).strip() else entry["title"]
+                bands = age_bands(text)
                 if bands:
                     entry["ages"] = bands
     merge_exhibitions(records)
