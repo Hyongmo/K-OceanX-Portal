@@ -3,83 +3,126 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="해양수산 AI·데이터 기업을 위한 연구개발, 산업동향, 행사 및 기업지원 정보.">
+  <meta name="description" content="해양·수산·해운·항만·조선 기업이 신청할 수 있는 지원사업, R&D, 행사, 산업·기술 동향을 한곳에 모은 정보포털.">
   <title>K-OceanX 기업성장 정보포털</title>
-  <link rel="stylesheet" href="./portal.css?v=16">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&amp;family=Noto+Serif+KR:wght@700;900&amp;display=swap">
+  <link rel="stylesheet" href="./portal.css?v=20">
   <script defer src="./portal.js"></script>
 </head>
 <body>
-  <header class="top">
-    <div class="wrap top-inner">
-      <a class="brand brand-oceanx" href="https://k-oceanx.or.kr/" aria-label="K-OceanX 홈페이지">
-        <span class="brand-symbol"><img src="./logos/k-oceanx.svg" width="209" height="56" alt=""></span>
-        <span>K-Ocean<span class="brand-accent">X</span></span>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand-oceanx" href="https://k-oceanx.or.kr/">
+        <img src="./logos/k-oceanx-color.png" width="900" height="241" alt="K-OceanX 해양과학기술 산학연협력센터">
       </a>
-      <a class="brand brand-kmi" href="https://www.kmi.re.kr/web/main/main.do?rbsIdx=1">
-        <img src="./logos/kmi.png" width="409" height="75" alt="KMI 한국해양수산개발원">
-        <svg class="brand-kmi-center" viewBox="0 0 286 29" role="img" aria-label="AI·데이터산업혁신센터">
-          <text x="0" y="24" textLength="286" lengthAdjust="spacing" aria-hidden="true">AI·데이터산업혁신센터</text>
+      <nav class="main-nav" aria-label="주 메뉴">
+        <a href="#support" data-view="support">지원사업 찾기</a>
+        <a href="#events" data-view="events">행사 일정</a>
+        <a href="#trends" data-view="trends">산업·기술 동향</a>
+        <a href="#agencies" data-view="agencies">지원기관 안내</a>
+      </nav>
+      <a class="brand-kmi" href="https://www.kmi.re.kr/web/main/main.do?rbsIdx=1" aria-label="KMI 한국해양수산개발원 AI·데이터산업혁신센터">
+        <img src="./logos/kmi.png" width="409" height="75" alt="">
+        <svg class="brand-kmi-center" viewBox="0 0 286 29" aria-hidden="true">
+          <text x="0" y="24" textLength="286" lengthAdjust="spacing">AI·데이터산업혁신센터</text>
         </svg>
       </a>
     </div>
   </header>
-  <main>
-    <section class="intro">
-      <div class="wrap">
-        <p class="eyebrow">해양수산 AI · 데이터</p>
-        <h1>기업성장 정보포털</h1>
-        <p>연구개발 공고부터 산업동향, 국내외 행사와 기업지원 정보를 찾아보세요.</p>
-        <label for="query" class="sr-only">통합검색</label>
-        <input id="query" type="search" placeholder="예: 스마트항만, 자율운항, 창업" autocomplete="off">
-        <p class="intro-links">
-          <a id="naver-news" href="https://search.naver.com/search.naver?where=news&amp;query=%ED%95%B4%EC%96%91%EC%88%98%EC%82%B0+AI">네이버 뉴스에서 검색</a>
-          <a id="naver-web" href="https://search.naver.com/search.naver?where=web&amp;query=%ED%95%B4%EC%96%91%EC%88%98%EC%82%B0+AI">네이버 웹문서에서 검색</a>
-          <a href="https://scm-briefing.kmi.re.kr/">KMI 글로벌 공급망 AI 일일 브리핑</a>
-        </p>
+
+  <main class="wrap">
+    <section id="view-support" class="view" aria-labelledby="support-title">
+      <div class="page-head">
+        <h1 id="support-title">해양수산 기업 지원사업</h1>
+        <p class="page-meta" id="support-meta">정보를 불러오는 중입니다.</p>
       </div>
+
+      <div class="condition">
+        <select id="region" aria-label="회사 소재지"></select>
+        <span>소재,</span>
+        <select id="age" aria-label="업력">
+          <option value="">업력 무관</option>
+          <option value="prestartup">예비창업</option>
+          <option value="early">창업 3년 이내</option>
+          <option value="scaleup">창업 3~10년</option>
+        </select>
+        <span>기업이 신청할 수 있는</span>
+        <select id="benefit" aria-label="받는 것"></select>
+        <label class="search">
+          <span>검색</span>
+          <input id="query" type="search" placeholder="사업명·기관·키워드 (예: 스마트항만, 수출, GPU)" autocomplete="off">
+        </label>
+      </div>
+
+      <div class="status-row">
+        <div class="status-tabs" role="group" aria-label="신청 상태">
+          <button type="button" data-status="open" aria-pressed="true">접수 중 <span></span></button>
+          <button type="button" data-status="undated" aria-pressed="false">마감일 미표기 <span></span></button>
+          <button type="button" data-status="closed" aria-pressed="false">마감 <span></span></button>
+        </div>
+        <p class="status-note" id="excluded-note" role="status"></p>
+      </div>
+      <p class="preset"><button type="button" id="preset-koceanx">K-OceanX 입주기업 기준(부산 소재)으로 보기</button> <label class="maritime-only"><input type="checkbox" id="maritime-only"> 해양수산 특화 공고만</label></p>
+
+      <div class="notice-head" aria-hidden="true">
+        <span>마감</span><span>받는 것</span><span>지원사업 · 지원기관</span><span id="eligibility-head">신청 자격</span>
+      </div>
+      <div id="notice-groups"></div>
+      <button type="button" class="more" id="more" hidden>더 보기</button>
     </section>
-    <section class="wrap catalog" aria-label="정보 탐색">
-      <nav id="categories" aria-label="정보 영역"></nav>
-      <section id="briefing" aria-labelledby="briefing-title" hidden>
-        <div class="briefing-header">
-          <h2 id="briefing-title">기업지원 브리핑</h2>
-          <p id="briefing-date"></p>
-        </div>
-        <div class="briefing-columns">
-          <section id="briefing-deadlines" aria-labelledby="briefing-deadlines-title" hidden>
-            <h3 id="briefing-deadlines-title">마감 임박</h3>
-            <ul id="briefing-deadline-list"></ul>
-          </section>
-          <section id="briefing-latest" aria-labelledby="briefing-latest-title" hidden>
-            <h3 id="briefing-latest-title">새로 올라온 소식</h3>
-            <ul id="briefing-latest-list"></ul>
-          </section>
-        </div>
-      </section>
-      <div class="toolbar">
-        <div id="results-heading"><h2 id="results-title">통합 결과</h2><p id="summary" role="status">정보를 불러오는 중입니다.</p></div>
-        <div class="filters">
-          <label>정보원<select id="source"><option value="">전체</option></select></label>
-          <label id="sort-filter">정렬<select id="sort"><option value="latest">최신순</option><option value="deadline">마감일순</option></select></label>
+
+    <section id="view-events" class="view" aria-labelledby="events-title" hidden>
+      <div class="page-head">
+        <h1 id="events-title">행사 일정</h1>
+        <p class="page-meta">교육·설명회·상담회·전시 · 개최일 순</p>
+      </div>
+      <div class="filter-line">
+        <label>개최 지역 <select id="event-region"></select></label>
+        <label>행사 유형 <select id="event-type"></select></label>
+      </div>
+      <ol id="event-list" class="plain-list"></ol>
+      <button type="button" class="more" id="more-events" hidden>더 보기</button>
+    </section>
+
+    <section id="view-trends" class="view" aria-labelledby="trends-title" hidden>
+      <div class="page-head">
+        <h1 id="trends-title">산업·기술 동향</h1>
+        <p class="page-meta">읽는 자료 · 해양수산 분야 기준 선별</p>
+      </div>
+      <div class="trend-columns" id="trend-columns"></div>
+    </section>
+
+    <section id="view-agencies" class="view" aria-labelledby="agencies-title" hidden>
+      <div class="page-head">
+        <h1 id="agencies-title">지역별 지원기관</h1>
+        <p class="page-meta">지금 수집된 공고를 낸 기관 · 지역을 고르면 기관별 공고 수 표시</p>
+      </div>
+      <div class="agencies">
+        <div class="region-tiles" id="region-tiles" role="group" aria-label="시·도 선택"></div>
+        <div class="agency-list">
+          <h2 id="agency-region"></h2>
+          <ol id="agency-rows" class="plain-list"></ol>
         </div>
       </div>
-      <fieldset id="section-filters" class="section-filters" hidden>
-        <legend id="section-filter-title"></legend>
-        <div id="section-filter-controls" class="filters"></div>
-        <p id="section-filter-help" hidden>한 공고에 여러 사업 유형이나 제공 형태가 포함될 수 있습니다.</p>
-      </fieldset>
-      <section id="rnd-featured" aria-labelledby="rnd-featured-title" hidden>
-        <h2 id="rnd-featured-title">지금 검토할 R&D 기회</h2>
-        <ul id="rnd-picks"></ul>
-      </section>
-      <aside id="rnd-related" aria-labelledby="rnd-related-title" hidden>
-        <h3 id="rnd-related-title">R&D 트랙을 포함한 기업지원사업</h3>
-        <ul id="rnd-related-links"></ul>
-      </aside>
-      <ul id="results"></ul>
-      <button type="button" id="more" hidden>더 보기</button>
     </section>
   </main>
-  <footer class="wrap"><span>K-OceanX</span><span id="updated"></span></footer>
+
+  <section class="digest" aria-label="산업·기술 동향과 행사 요약" id="digest">
+    <div class="wrap">
+      <div class="digest-head">
+        <h2>산업·기술 동향</h2>
+        <a href="#trends">전체 보기</a>
+      </div>
+      <div class="digest-columns" id="digest-columns"></div>
+    </div>
+  </section>
+
+  <footer class="wrap site-footer">
+    <span>K-OceanX 해양과학기술 산학연협력센터 · KMI AI·데이터산업혁신센터</span>
+    <span id="updated"></span>
+    <span>신청 조건과 마감은 각 기관 원문 기준</span>
+  </footer>
 </body>
 </html>

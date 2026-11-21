@@ -1,51 +1,19 @@
 "use strict";
 
-const categories = {
-  all: "전체", rnd: "R&D·기획", patent: "특허·기술", industry: "산업동향",
-  international: "국제 행사", domestic: "국내 행사", support: "기업지원·인증",
+const el = (id) => document.getElementById(id);
+const REGIONS = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기",
+  "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"];
+// Rough map order for the region tiles (four columns, north to south).
+const TILE_ORDER = ["인천", "서울", "경기", "강원", "충남", "세종", "충북", "경북", "전북", "대전", "대구", "울산",
+  "광주", "전남", "경남", "부산", "제주"];
+const AGE_LABELS = {prestartup: "예비창업", early: "창업 3년 이내", scaleup: "창업 3~10년"};
+const PLANNING = {
+  demand: "수요 제안", opinion: "RFP 의견", planning: "기획 지원", joint: "공동기획",
+  preview: "공모 예고", application: "본공모",
 };
-const areaGroups = [
-  ["공고·지원", "rnd", "support"],
-  ["시장·기술정보", "patent", "industry"],
-  ["행사·네트워킹", "domestic", "international"],
-];
-const planningStages = {
-  demand: "수요 제안", opinion: "RFP 의견 제출", planning: "기획비·컨설팅 신청",
-  joint: "공동기획 참여", preview: "공모 예고", application: "본공모 신청",
-};
-const planningActions = {
-  demand: "공고의 조사 분야와 제안서 양식을 확인하세요.",
-  opinion: "RFP 초안에서 기술 범위와 일정에 대한 의견을 준비하세요.",
-  planning: "기획비 지원 항목과 주관기관 자격을 확인하세요.",
-  joint: "필요한 대학·연구기관과 컨소시엄 조건을 확인하세요.",
-};
-const briefingNotes = {
-  "nipa:17006": {
-    title: "첨단 GPU 베타서비스 참여자를 모집합니다",
-    lead: "과기정통부와 NIPA가 첨단 GPU 자원의 배분·운영을 시험합니다. AI 모델 개발에 컴퓨팅 자원이 필요한 팀은 이용 조건과 신청 자격을 확인하세요.",
-  },
-  "keit_planning:001026": {
-    title: "제조 현장의 작업 노하우를 AI로 활용할 기술 수요를 받습니다",
-    lead: "KEIT가 2027년 제조 AX 과제 기획에 반영할 아이디어를 받습니다. 작업자의 노하우를 데이터로 활용하려는 조선·기자재 기업은 조사 분야와 제안 양식을 살펴보세요.",
-  },
-  "kstartup:179815": {
-    title: "KDB NextONE 부산, 7년 이내 창업법인 모집",
-    lead: "혁신성장산업에 해당하는 창업 7년 이내 법인이 신청할 수 있습니다. 부산 해양, 울산 AI·산업 AX, 경남 조선해양은 공고에 명시된 지역별 우대 분야입니다.",
-  },
-  "kstartup:179832": {
-    title: "기술 수요기업과 1:1로 만날 스타트업을 찾습니다",
-    lead: "대구창조경제혁신센터가 기술소개자료를 수요기업에 전달하고, 매칭된 기업의 1:1 미팅을 연결합니다. 지원 전에 수요 분야와 참여기업 목록을 확인하세요.",
-  },
-  "kstartup:179824": {
-    title: "송파ICT청년창업지원센터, 2027년 입주기업 모집",
-    lead: "만 39세 이하 ICT·AI·빅데이터 분야 예비창업자와 창업 3년 이하 기업이 대상입니다. 사무공간과 멘토링을 제공하며 입주 후 사업장 등록 또는 이전 조건이 있습니다.",
-  },
-  "kotra:245160": {
-    title: "일본 조선업 투자 확대, 기자재 기업이 살펴볼 변화",
-    lead: "KOTRA가 일본 조선업의 투자 움직임을 전했습니다. 일본 진출을 검토하는 조선·해양 기자재 기업은 설비 투자와 공급망 변화를 살펴보세요.",
-  },
-};
-const synonyms = [
+const MARITIME_SOURCES = new Set(["kimst_rnd", "kimst_notice", "komeri", "bisfe", "jcia", "nor_shipping"]);
+const MARITIME = /해양|수산|어업|어촌|해운|항만|선박|조선(?!일보|대)|기자재|크루즈|블루\s*바이오|해상\s*풍력|쇄빙|ocean|marine|maritime/i;
+const SYNONYMS = [
   ["스마트항만", "스마트 항만", "항만자동화", "항만 자동화"],
   ["스마트양식", "스마트 양식", "지능형양식", "양식 자동화"],
   ["자율운항", "자율 운항", "무인선박", "무인 선박"],
@@ -53,441 +21,390 @@ const synonyms = [
   ["사업화", "상용화"],
   ["해상공급망", "해상 공급망", "해운 공급망"],
 ];
-const el = (id) => document.getElementById(id);
+const PAGE = 50;
+
 const today = new Intl.DateTimeFormat("sv-SE", {timeZone: "Asia/Seoul"}).format(new Date());
 const nowInSeoul = new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
 }).format(new Date());
-const isClosed = (entry) => entry.deadline < today ||
-  (entry.deadline === today && entry.deadline_time && entry.deadline_time <= nowInSeoul);
-const briefingDate = new Intl.DateTimeFormat("ko-KR", {month: "long", day: "numeric", timeZone: "UTC"});
-const formatBriefDate = (value) => briefingDate.format(new Date(value + "T00:00:00Z"));
-const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-const supportFields = ["stages", "types", "methods", "regions"];
-const daysFromToday = (value) => (Date.parse(value) - Date.parse(today)) / 86400000;
-const sourceKeys = (entry) => entry.source !== "gep" && entry.gep_notices?.length ?
-  [entry.source, "gep"] : [entry.source];
-const noticeDeadlines = (entry) => [entry, ...(entry.gep_notices ?? [])].filter((notice) => notice.deadline);
-const deadlineLabels = {"7": "7일 이내", "30": "30일 이내", later: "30일 이후", past: "마감"};
-const deadlineField = (label) => ({
-  label, labels: deadlineLabels,
-  keys: (entry) => noticeDeadlines(entry).flatMap((notice) => {
-    if (isClosed(notice)) return ["past"];
-    const days = daysFromToday(notice.deadline);
-    if (days <= 7) return ["7", "30"];
-    return days <= 30 ? ["30"] : ["later"];
-  }),
-});
-const textField = (label, name) => ({label, keys: (entry) => entry[name] ? [entry[name]] : []});
-const tagField = (label, name) => ({label, keys: (entry) => entry[name] ?? []});
-const eventFields = [
-  {label: "개최 월", keys: (entry) => entry.event_start ? [entry.event_start.slice(0, 7)] : []},
-  textField("개최 지역", "event_region"),
-  tagField("행사 유형", "event_types"),
-  tagField("참가 방식", "participation"),
-  deadlineField("신청 마감"),
-];
-const categoryCounts = {};
-const areaButtons = {};
-const blank = () => ({ records: [], sources: {} });
-let data = blank();
-let selected = "home";
-let localFacets = [];
-let limit = 20;
-let ready = false;
+
+let data = {records: [], sources: {}, support_facets: {}};
+let status = "open";
+let limit = PAGE;
+let eventLimit = 40;
+let agencyRegion = "부산";
 
 function addText(parent, tag, value, className) {
   const node = document.createElement(tag);
-  node.textContent = value;
+  if (value) node.textContent = value;
   if (className) node.className = className;
   parent.append(node);
   return node;
 }
 
-function fillCategories() {
-  const nav = el("categories");
-  function addArea(parent, key, label) {
-    const button = addText(parent, "button", label);
-    areaButtons[key] = button;
-    if (key !== "home") categoryCounts[key] = addText(button, "span", "", "category-count");
-    button.type = "button";
-    button.setAttribute("aria-pressed", String(key === selected));
-    button.addEventListener("click", () => selectArea(key));
-  }
-  const overview = addText(nav, "div", "", "area-group");
-  addArea(overview, "home", "홈");
-  addArea(overview, "all", categories.all);
-  for (const [label, ...keys] of areaGroups) {
-    const group = addText(nav, "div", "", "area-group");
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-label", label);
-    addText(group, "span", label, "area-group-label").setAttribute("aria-hidden", "true");
-    keys.forEach((key) => addArea(group, key, categories[key]));
-  }
+function addLink(parent, text, url, className) {
+  let safe;
+  try { safe = new URL(url); } catch { return addText(parent, "span", text, className); }
+  if (safe.protocol !== "https:") return addText(parent, "span", text, className);
+  const link = addText(parent, "a", text, className);
+  link.href = safe.href;
+  return link;
+}
+
+const normalize = (value) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+const days = (value) => Math.round((Date.parse(value) - Date.parse(today)) / 86400000);
+const shortDate = (value) => `${Number(value.slice(5, 7))}.${Number(value.slice(8, 10))}`;
+const sourceLabel = (entry) => entry.publisher || data.sources[entry.source] || entry.source;
+const typeLabels = (entry) => (entry.support?.types ?? []).map((key) => data.support_facets?.types?.[key]).filter(Boolean);
+const regionsOf = (entry) => entry.support?.regions ?? (REGIONS.includes(entry.place) ? [entry.place] : []);
+const stagesOf = (entry) => entry.support?.stages ?? [];
+const isMaritime = (entry) => Boolean(entry.maritime) || MARITIME_SOURCES.has(entry.source) || MARITIME.test(entry.title);
+
+function isClosed(entry) {
+  if (/\[\s*(?:접수\s*)?마감\s*\]/.test(entry.title)) return true;
+  if (!entry.deadline) return false;
+  return entry.deadline < today || (entry.deadline === today && Boolean(entry.deadline_time) && entry.deadline_time <= nowInSeoul);
+}
+
+function statusOf(entry) {
+  if (isClosed(entry)) return "closed";
+  return entry.deadline ? "open" : "undated";
 }
 
 function searchTerms(query) {
-  const normalized = normalize(query);
-  const known = synonyms.find((group) => group.some((word) => normalize(word) === normalized));
-  return (known ? [normalized] : query.split(/\s+/).filter(Boolean).map(normalize)).map((term) => {
-    const alternatives = synonyms.find((group) => group.some((word) => normalize(word) === term));
-    return alternatives ? alternatives.map(normalize) : [term];
+  return query.split(/\s+/).filter(Boolean).map(normalize).map((term) => {
+    const group = SYNONYMS.find((words) => words.some((word) => normalize(word) === term));
+    return group ? group.map(normalize) : [term];
   });
 }
 
-function supportLabels(entry, field) {
-  return (entry.support?.[field] ?? []).map((key) => data.support_facets?.[field]?.[key]).filter(Boolean);
+function matches(entry, terms) {
+  if (!terms.length) return true;
+  const subject = normalize([entry.title, entry.publisher, entry.topic, entry.eligibility, entry.place,
+    data.sources[entry.source], entry.event_region, ...(entry.event_types ?? []), ...typeLabels(entry),
+    PLANNING[entry.planning_stage]].filter(Boolean).join(" "));
+  return terms.every((group) => group.some((word) => subject.includes(word)));
 }
 
-function applicationStatus(entry) {
-  if (/취소|잠정\s*중단/.test(entry.title)) return ["취소·중단"];
-  if (/\[\s*(?:접수\s*마감|마감)\s*\]/.test(entry.title) || isClosed(entry)) return ["마감"];
-  if (entry.planning_stage === "preview" || entry.opens > today) return ["접수 예정"];
-  return entry.opens && entry.deadline ? ["접수 중"] : [];
+/* ---------- 지원사업 찾기 ---------- */
+
+function supportScope() {
+  return data.records.filter((entry) => entry.category === "support" || entry.category === "rnd");
 }
 
-function sectionFields(area) {
-  if (area === "rnd") return [
-    {...textField("참여 유형", "planning_stage"), labels: planningStages},
-    {label: "접수 상태", keys: applicationStatus},
-    deadlineField("제안·신청 마감"),
-    {label: "공고 기관", keys: (entry) => {
-      const agency = entry.publisher || {
-        kimst_rnd: "KIMST", kimst_notice: "KIMST", bistep_planning: "BISTEP",
-        nia_planning: "NIA", nipa_demand: "NIPA", keit_planning: "KEIT",
-      }[entry.source];
-      return agency ? [agency] : [];
-    }},
-  ];
-  if (area === "support") return [["types", "사업 유형"], ["stages", "기업 단계"],
-    ["regions", "사업 지역"], ["methods", "제공 형태"]].map(([key, label]) => ({
-    label, labels: data.support_facets?.[key], keys: (entry) => entry.support?.[key] ?? [],
-  }));
-  if (area === "patent") return [
-    textField("자료 유형", "technology_type"), tagField("기술 분야", "technology_fields"),
-    textField("출원 국가", "filing_country"), textField("출원인", "applicant"),
-  ];
-  if (area === "industry") return [
-    tagField("산업 분야", "industry_sectors"), tagField("주제", "industry_topics"),
-    textField("대상 국가·지역", "place"),
-  ];
-  return ["domestic", "international"].includes(area) ? eventFields : [];
+function conditionCheck(entry, region, age) {
+  const regions = regionsOf(entry);
+  const stages = stagesOf(entry);
+  const regionKnown = !region || regions.length > 0;
+  const regionOk = !region || !regions.length || regions.includes(region) || regions.includes("전국");
+  const ageKnown = !age || stages.length > 0;
+  const ageOk = !age || !stages.length || stages.includes(age);
+  return {regionOk, ageOk, confirmed: regionOk && ageOk && regionKnown && ageKnown, regionKnown, ageKnown};
 }
 
-function selectArea(area) {
-  if (area === selected) return;
-  selected = area;
-  el("sort").value = "latest";
-  for (const [key, button] of Object.entries(areaButtons)) button.setAttribute("aria-pressed", String(area === key));
-  fillSectionFilters();
-  reset();
+function benefitMatches(entry, benefit) {
+  if (!benefit) return true;
+  if (benefit === "rnd") return entry.category === "rnd";
+  return entry.category === "support" && (entry.support?.types ?? []).includes(benefit);
 }
 
-function fillSectionFilters() {
-  const controls = el("section-filter-controls");
-  controls.replaceChildren();
-  localFacets = [];
-  const scope = data.records.filter((entry) => entry.category === selected);
-  for (const field of sectionFields(selected)) {
-    const keys = (entry) => {
-      const values = field.keys(entry);
-      return values.length ? values : ["unknown"];
-    };
-    const present = countKeys(scope, keys);
-    // Keep an unpopulated dimension off the screen until at least one value is known.
-    if (!field.labels && ![...present.keys()].some((key) => key !== "unknown")) continue;
-    if (!scope.length) continue;
-    const label = addText(controls, "label", field.label);
-    const control = addText(label, "select", "");
-    addText(control, "option", "전체").value = "";
-    const choices = field.labels ? Object.keys(field.labels) : [...present.keys()].sort((a, b) => a.localeCompare(b, "ko"));
-    for (const key of choices.filter((key) => key !== "unknown")) {
-      addText(control, "option", field.labels?.[key] ?? key).value = key;
-    }
-    if (present.has("unknown")) {
-      addText(control, "option", selected === "support" ? "미분류" : "미확인").value = "unknown";
-    }
-    control.addEventListener("change", reset);
-    localFacets.push({control, keys});
-  }
-  el("section-filters").hidden = !localFacets.length;
-  el("section-filter-title").textContent = selected === "support" ? "기업지원사업 찾기" : `${categories[selected] ?? ""} 필터`;
-}
-
-function matchesFacets(entry, facets, except) {
-  return facets.every(({control, keys}) => control === except || !control.value || keys(entry).includes(control.value));
-}
-
-function countKeys(entries, keysFor) {
-  const counts = new Map();
-  for (const entry of entries) {
-    for (const key of new Set(keysFor(entry))) {
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-  }
-  return counts;
-}
-
-const countLabel = (count) => `${count.toLocaleString("ko-KR")}건`;
-
-function updateFacetCounts(control, keys, entries) {
-  const counts = countKeys(entries, keys);
-  for (const option of control.options) {
-    const label = option.dataset.label ??= option.textContent;
-    const count = option.value ? counts.get(option.value) ?? 0 : entries.length;
-    option.textContent = `${label} (${countLabel(count)})`;
-  }
-}
-
-function appendSupportTags(parent, entry, brief = false) {
-  if (entry.category !== "support") return;
-  const fields = brief ? ["stages", "types"] : supportFields;
-  const labels = fields.flatMap((field) => supportLabels(entry, field));
-  if (!labels.length) return;
-  const tags = addText(parent, "p", "", "meta support-tags");
-  (brief ? labels.slice(0, 3) : labels).forEach((label) => addText(tags, "span", label));
-}
-
-function matches(record, terms) {
-  const gepTitles = (record.gep_notices ?? []).map((notice) => notice.title);
-  const subject = [record.title, record.place, record.topic, record.eligibility, record.publisher,
-    planningStages[record.planning_stage], data.sources[record.source],
-    record.event_region, record.technology_type, record.filing_country, record.applicant,
-    ...(record.industry_sectors ?? []), ...(record.industry_topics ?? []),
-    ...(record.event_types ?? []), ...(record.participation ?? []), ...(record.technology_fields ?? []),
-    ...supportFields.flatMap((field) => supportLabels(record, field)),
-    ...gepTitles, gepTitles.length ? data.sources.gep : "", categories[record.category]]
-    .filter(Boolean).join(" ");
-  const compact = normalize(subject);
-  return terms.every((group) => group.some((word) => {
-    if (word !== "ai") return compact.includes(word);
-    return /(^|[^a-z0-9])ai(?=$|[^a-z0-9])/i.test(subject.normalize("NFKC"));
-  }));
-}
-
-function selectBriefing(entries) {
-  const relevance = (entry) => {
-    if (briefingNotes[entry.id]) return 3;
-    const subject = [entry.title, entry.topic].filter(Boolean).join(" ");
-    if (/해양|해운|해상|항만|선박|조선|수산|양식|maritime|ocean/i.test(subject)) return 2;
-    return /(?<![a-z0-9])AI(?![a-z0-9])|인공지능|학습용\s*데이터|GPU|제조\s*AX/i.test(subject) ? 1 : 0;
-  };
-  const candidates = entries.filter((entry) =>
-    relevance(entry) && !/\[\s*(?:접수\s*마감|마감|취소)\s*\]|잠정\s*중단|공고\s*취소/.test(entry.title)
-  );
-  const deadlineOrder = (a, b) => (a.deadline + (a.deadline_time || "23:59"))
-    .localeCompare(b.deadline + (b.deadline_time || "23:59"));
-  const deadlines = candidates
-    .filter((entry) => entry.planning_stage !== "preview" && (!entry.opens || entry.opens <= today))
-    .map((entry) => ({
-      entry,
-      deadline: noticeDeadlines(entry)
-        .filter((item) => !isClosed(item) && daysFromToday(item.deadline) <= 7)
-        .sort(deadlineOrder)[0],
-    }))
-    .filter(({deadline}) => deadline)
-    .sort((a, b) => relevance(b.entry) - relevance(a.entry) || deadlineOrder(a.deadline, b.deadline))
-    .slice(0, 3).sort((a, b) => deadlineOrder(a.deadline, b.deadline));
-  const featured = new Set(deadlines.map(({entry}) => entry.id));
-  const latest = candidates.filter((entry) => !featured.has(entry.id) &&
-    entry.published && daysFromToday(entry.published) >= -6 && daysFromToday(entry.published) <= 0 &&
-    (!entry.deadline || !isClosed(entry)))
-    .sort((a, b) => b.published.localeCompare(a.published) || relevance(b) - relevance(a))
-    .slice(0, 3);
-  return {deadlines, latest};
-}
-
-function appendBrief(parent, entry, deadline) {
-  const source = deadline && deadline !== entry ? data.sources.gep : entry.publisher || data.sources[entry.source];
-  const url = new URL(deadline?.url || entry.url);
-  if (url.protocol !== "https:") return;
-  const note = briefingNotes[entry.id];
-  const story = document.createElement("li");
-  const article = document.createElement("article");
-  story.append(article);
-  const meta = addText(article, "p", "", "meta");
-  addText(meta, "span", source);
-  if (deadline) {
-    const date = deadline.deadline === today ? "오늘" : formatBriefDate(deadline.deadline);
-    const time = deadline.deadline_time ? ` ${deadline.deadline_time} KST` : "";
-    addText(meta, "span", `${date}${time} 마감`, "briefing-when");
-  } else {
-    addText(meta, "span", formatBriefDate(entry.published));
-    if (entry.deadline) addText(meta, "span", `${formatBriefDate(entry.deadline)} 마감`);
-  }
-  addText(addText(article, "h4", ""), "a", note?.title || entry.title).href = url.href;
-  appendSupportTags(article, entry, true);
-  const lead = note?.lead || entry.topic || entry.eligibility || planningActions[entry.planning_stage];
-  if (lead) addText(article, "p", lead, "briefing-lead");
-  const linkLabel = entry.category === "industry" ? "출처에서 기사 읽기" :
-    deadline && !deadline.deadline_time ? "참여 조건·마감 시각 확인" : "공식 원문 보기";
-  addText(article, "a", linkLabel, "briefing-link").href = url.href;
-  parent.append(story);
-}
-
-function renderBriefing(entries) {
-  const {deadlines, latest} = selectBriefing(entries);
-  const deadlineList = document.createDocumentFragment();
-  deadlines.forEach(({entry, deadline}) => appendBrief(deadlineList, entry, deadline));
-  el("briefing-deadline-list").replaceChildren(deadlineList);
-  const latestList = document.createDocumentFragment();
-  latest.forEach((entry) => appendBrief(latestList, entry));
-  el("briefing-latest-list").replaceChildren(latestList);
-  el("briefing-deadlines").hidden = deadlines.length === 0;
-  el("briefing-latest").hidden = latest.length === 0;
-  el("briefing").hidden = deadlines.length + latest.length === 0;
-  return new Set([...deadlines.map(({entry}) => entry.id), ...latest.map((entry) => entry.id)]);
-}
-
-function appendRecord(parent, entry, featured = false) {
-  const item = document.createElement("li");
-  const top = addText(item, "p", "", "meta");
-  addText(top, "span", categories[entry.category], "category");
-  addText(top, "span", entry.publisher || data.sources[entry.source]);
-  if (entry.planning_stage) addText(top, "span", planningStages[entry.planning_stage]);
-  if (entry.technology_type) addText(top, "span", entry.technology_type);
-  const url = new URL(entry.url);
-  if (url.protocol !== "https:") return;
-  const link = addText(item, "a", entry.title);
-  link.href = url.href;
-  const meta = addText(item, "p", "", "meta");
-  if (entry.published) addText(meta, "span", `게시 ${entry.published}`);
-  if (entry.event_start) addText(meta, "span", `개최 ${entry.event_start}${entry.event_end && entry.event_end !== entry.event_start ? " ~ " + entry.event_end : ""}`);
-  if (entry.exhibition_start && entry.exhibition_end) addText(meta, "span", `전시장 운영 ${entry.exhibition_start} ~ ${entry.exhibition_end}`);
-  if (entry.deadline) {
-    const time = entry.deadline_time ? " " + entry.deadline_time + " KST" : "";
-    const label = isClosed(entry) ? "마감" : entry.planning_stage === "demand" ? "제안 마감" :
-      entry.planning_stage === "opinion" ? "의견 마감" : "신청 마감";
-    addText(meta, "span", `${label} ${entry.deadline}${time}`);
-  }
-  if (entry.event_region) addText(meta, "span", entry.event_region);
-  if (entry.place && entry.place !== entry.event_region) addText(meta, "span", entry.place);
-  for (const [field, label] of [["visit_url", "참관 안내"], ["exhibit_url", "전시 참가 안내"]]) {
-    if (entry[field]?.startsWith("https://nor-shipping.com/")) {
-      addText(meta, "a", label).href = entry[field];
-    }
-  }
-  for (const notice of entry.gep_notices ?? []) {
-    if (!notice.url.startsWith("https://www.gep.or.kr/gept/")) continue;
-    const reference = addText(item, "p", "", "meta");
-    const label = entry.gep_notices.length === 1 ? "KOTRA 전시 안내" : notice.title;
-    addText(reference, "a", label).href = notice.url;
-    if (notice.deadline) {
-      const time = notice.deadline_time ? " " + notice.deadline_time + " KST" : "";
-      addText(reference, "span", `KOTRA 신청 마감 ${notice.deadline}${time}`);
-    }
-  }
-  if (!meta.childElementCount) meta.remove();
-  appendSupportTags(item, entry);
-  if (entry.eligibility && !entry.eligibility_url) {
-    const eligibility = addText(item, "p", "", "eligibility");
-    addText(eligibility, "strong", entry.planning_stage ? "참여 대상 " : "신청 대상 ");
-    addText(eligibility, "span", entry.eligibility);
-  }
-  if (entry.support_tracks?.length) {
-    const tracks = addText(item, "div", "", "support-tracks");
-    if (entry.support_track_note) addText(tracks, "p", entry.support_track_note, "meta");
-    entry.support_tracks.forEach((track) => {
-      const row = addText(tracks, "p", "");
-      addText(row, "strong", track.name + " ");
-      addText(row, "span", track.description);
-    });
-  }
-  if (featured) addText(item, "p", planningActions[entry.planning_stage], "eligibility");
-  if (entry.eligibility && entry.eligibility_url?.startsWith("https://www.jcia.or.kr/")) {
-    const eligibility = addText(item, "p", "", "eligibility");
-    addText(eligibility, "strong", "신청 대상 ");
-    addText(eligibility, "span", entry.eligibility);
-    addText(eligibility, "a", "공식 공고문에서 조건 확인").href = entry.eligibility_url;
-  }
-  parent.append(item);
-}
-
-function render() {
-  if (!ready) return;
+function renderSupport() {
+  const region = el("region").value;
+  const age = el("age").value;
+  const benefit = el("benefit").value;
   const terms = searchTerms(el("query").value.trim());
-  const source = el("source");
-  const hasLocalFilters = localFacets.some(({control}) => control.value);
-  const defaultView = !terms.length && !source.value && !hasLocalFilters && el("sort").value === "latest";
-  const home = selected === "home";
-  const searched = data.records.filter((entry) => matches(entry, terms));
-  const shared = source.value ? searched.filter((entry) => sourceKeys(entry).includes(source.value)) : searched;
-  const totals = countKeys(shared, (entry) => [entry.category]);
-  for (const [key, count] of Object.entries(categoryCounts)) {
-    count.textContent = " " + countLabel(key === "all" ? shared.length : totals.get(key) ?? 0);
+  const maritimeOnly = el("maritime-only").checked;
+  const base = supportScope().filter((entry) => matches(entry, terms) && benefitMatches(entry, benefit) &&
+    (!maritimeOnly || isMaritime(entry)));
+  let regionOut = 0, ageOut = 0;
+  const eligible = [];
+  for (const entry of base) {
+    const check = conditionCheck(entry, region, age);
+    if (!check.regionOk) regionOut += 1;
+    else if (!check.ageOk) ageOut += 1;
+    else eligible.push(entry);
   }
-  updateFacetCounts(source, sourceKeys, searched);
-  const scope = selected === "all" ? shared : shared.filter((entry) => entry.category === selected);
-  for (const {control, keys} of localFacets) {
-    updateFacetCounts(control, keys, scope.filter((entry) => matchesFacets(entry, localFacets, control)));
+  const counts = {open: 0, undated: 0, closed: 0};
+  eligible.forEach((entry) => { counts[statusOf(entry)] += 1; });
+  for (const button of document.querySelectorAll(".status-tabs button")) {
+    button.querySelector("span").textContent = counts[button.dataset.status].toLocaleString("ko-KR");
+    button.setAttribute("aria-pressed", String(button.dataset.status === status));
   }
-  const help = el("section-filter-help");
-  help.hidden = selected !== "support" && !hasLocalFilters;
-  help.textContent = [
-    selected === "support" ? "한 공고에 여러 사업 유형이나 제공 형태가 포함될 수 있습니다." : "",
-    hasLocalFilters ? "상단 건수는 검색어와 정보원 기준입니다." : "",
-  ].filter(Boolean).join(" ");
-  const results = scope.filter((entry) => matchesFacets(entry, localFacets));
-  const upcoming = (entry) => noticeDeadlines(entry)
-    .filter((notice) => !isClosed(notice))
-    .map((notice) => notice.deadline + (notice.deadline_time || "23:59"))
-    .sort()[0] ?? "9999";
-  results.sort((a, b) => {
-    if (el("sort").value === "deadline") {
-      const order = upcoming(a).localeCompare(upcoming(b));
-      if (order) return order;
-    }
-    return (b.published || b.event_start || "").localeCompare(a.published || a.event_start || "") ||
-      a.title.localeCompare(b.title, "ko");
+  const parts = [];
+  if (regionOut) parts.push(`다른 지역 한정 ${regionOut.toLocaleString("ko-KR")}건`);
+  if (ageOut) parts.push(`업력 조건 불일치 ${ageOut.toLocaleString("ko-KR")}건`);
+  el("excluded-note").textContent = parts.length ? `조건이 맞지 않아 제외: ${parts.join(" · ")}` : "";
+  el("eligibility-head").textContent = region || age ?
+    `신청 자격 (${[region && region + " 소재", age && AGE_LABELS[age]].filter(Boolean).join(" · ")} 기준)` : "신청 자격";
+
+  const shown = eligible.filter((entry) => statusOf(entry) === status);
+  const due = (entry) => entry.deadline + (entry.deadline_time || "23:59");
+  if (status === "open") shown.sort((a, b) => due(a).localeCompare(due(b)) || a.title.localeCompare(b.title, "ko"));
+  else if (status === "closed") shown.sort((a, b) => due(b).localeCompare(due(a)));
+  else shown.sort((a, b) => (b.published || "").localeCompare(a.published || "") || a.title.localeCompare(b.title, "ko"));
+
+  const groups = status === "open" ? [
+    ["이번 주 마감", (entry) => days(entry.deadline) <= 7, true],
+    ["30일 안에 마감", (entry) => days(entry.deadline) <= 30, false],
+    ["30일 이후 마감", () => true, false],
+  ] : [[status === "closed" ? "마감된 공고" : "마감일이 공고에 표기되지 않은 공고 (상시·예산 소진 시까지 등)", () => true, false]];
+  const container = el("notice-groups");
+  container.replaceChildren();
+  // Each notice belongs to the first group whose test it passes.
+  const groupOf = new Map(shown.map((entry) => [entry.id, groups.findIndex(([, test]) => test(entry))]));
+  const visible = shown.slice(0, limit);
+  groups.forEach(([title, , urgent], index) => {
+    const members = visible.filter((entry) => groupOf.get(entry.id) === index);
+    if (!members.length) return;
+    const total = shown.filter((entry) => groupOf.get(entry.id) === index).length;
+    addText(container, "h2", `${title} · ${total.toLocaleString("ko-KR")}건`, urgent ? "group-title urgent" : "group-title");
+    const list = addText(container, "ol", "", "notice-list");
+    members.forEach((entry) => appendNotice(list, entry, region, age));
   });
-  const briefingIds = renderBriefing(home ? shared : []);
-  el("results-title").textContent = home ? "홈" : selected === "all" ? "통합 결과" : categories[selected];
-  el("results-heading").hidden = home && briefingIds.size > 0;
-  el("sort-filter").hidden = home || ["industry", "patent"].includes(selected);
-  el("summary").textContent = home ? "표시할 브리핑이 없습니다." :
-    results.length ? `검색 결과 ${countLabel(results.length)}` : "조건에 맞는 정보가 없습니다.";
-  const picks = selected === "rnd" && defaultView ?
-    results.filter((entry) => planningActions[entry.planning_stage] &&
-      entry.opens && entry.opens <= today && entry.deadline && !isClosed(entry))
-      .sort((a, b) => upcoming(a).localeCompare(upcoming(b))).slice(0, 3) : [];
-  const featured = document.createDocumentFragment();
-  picks.forEach((entry) => appendRecord(featured, entry, true));
-  el("rnd-picks").replaceChildren(featured);
-  el("rnd-featured").hidden = !picks.length;
-  const related = selected === "rnd" && !hasLocalFilters ? shared.filter((entry) => entry.category === "support" &&
-    entry.support_tracks?.some((track) => track.types.includes("research")) && entry.url.startsWith("https://")) : [];
-  el("rnd-related").hidden = !related.length;
-  el("rnd-related-links").replaceChildren();
-  for (const entry of related) {
-    const item = addText(el("rnd-related-links"), "li", "");
-    addText(item, "a", entry.title).href = entry.url;
-  }
-  const remaining = results.filter((entry) => !picks.includes(entry));
-  const list = document.createDocumentFragment();
-  remaining.slice(0, limit).forEach((entry) => appendRecord(list, entry));
-  el("results").replaceChildren(list);
-  el("more").hidden = remaining.length <= limit;
+  if (!shown.length) addText(container, "p", "조건에 맞는 공고가 없습니다. 조건이나 검색어를 바꿔 보세요.", "empty");
+  el("more").hidden = shown.length <= limit;
+  el("more").textContent = `나머지 ${(shown.length - limit).toLocaleString("ko-KR")}건 중 ${Math.min(PAGE, shown.length - limit)}건 더 보기`;
 }
 
-function reset() {
-  limit = 20;
-  render();
+function appendNotice(list, entry, region, age) {
+  const item = addText(list, "li", "", "notice");
+  const due = addText(item, "div", "", "due");
+  if (entry.deadline) {
+    const left = days(entry.deadline);
+    const closed = isClosed(entry);
+    if (!closed && left <= 7) due.classList.add("urgent");
+    addText(due, "strong", closed ? "마감" : left === 0 ? "오늘" : `D-${left}`);
+    addText(due, "span", shortDate(entry.deadline) + (entry.deadline_time ? " " + entry.deadline_time : ""));
+    if (entry.opens && entry.opens > today) addText(due, "span", `${shortDate(entry.opens)} 접수 시작`);
+  } else {
+    addText(due, "strong", "상시");
+    if (entry.published) addText(due, "span", `${shortDate(entry.published)} 게시`);
+  }
+
+  const kind = addText(item, "div", "", "kind");
+  if (entry.category === "rnd") {
+    kind.textContent = "R&D 과제";
+    if (PLANNING[entry.planning_stage]) addText(kind, "span", PLANNING[entry.planning_stage], "sub");
+  } else {
+    const labels = typeLabels(entry);
+    kind.textContent = labels[0] ?? "분류 전";
+    if (labels.length > 1) addText(kind, "span", labels.slice(1, 3).join(" · "), "sub");
+  }
+
+  const title = addText(item, "div", "", "title");
+  addLink(title, entry.title, entry.url);
+  const sub = addText(title, "span", "", "sub");
+  const regions = regionsOf(entry);
+  sub.textContent = [sourceLabel(entry), regions.length ? regions.join("·") : ""].filter(Boolean).join(" · ");
+  if (isMaritime(entry)) {
+    sub.append(" · ");
+    addText(sub, "span", "해양수산 특화", "maritime");
+  }
+
+  const check = conditionCheck(entry, region, age);
+  const box = addText(item, "div", "", "eligibility");
+  const detail = entry.eligibility && entry.eligibility.length > 90 ? entry.eligibility.slice(0, 89) + "…" : entry.eligibility;
+  if ((region || age) && check.confirmed) {
+    box.classList.add("ok");
+    const span = addText(box, "span", "");
+    addText(span, "strong", "해당");
+    span.append(detail || [regions.includes("전국") ? "전국 대상" : regions.join("·") + " 대상",
+      stagesOf(entry).map((key) => AGE_LABELS[key]).filter(Boolean).join("·")].filter(Boolean).join(" · "));
+  } else if (region || age) {
+    const missing = [region && !check.regionKnown ? "지역" : "", age && !check.ageKnown ? "업력" : ""].filter(Boolean);
+    addText(box, "span", `${missing.length ? missing.join("·") + " 조건 " : ""}공고문 확인 필요${detail ? " · " + detail : ""}`);
+  } else {
+    addText(box, "span", detail || (regions.length ? `${regions.join("·")} 대상` : "공고문에서 자격 확인"));
+  }
 }
 
-fillCategories();
-el("query").addEventListener("input", () => {
-  const query = el("query").value.trim() || "해양수산 AI";
-  for (const link of [el("naver-news"), el("naver-web")]) {
-    const search = new URL(link.href);
-    search.searchParams.set("query", query);
-    link.href = search.href;
+/* ---------- 행사 일정 ---------- */
+
+const started = (entry) => Boolean(entry.event_start) && entry.event_start < today;
+
+function upcomingEvents() {
+  return data.records.filter((entry) => ["domestic", "international"].includes(entry.category))
+    .filter((entry) => {
+      const last = entry.event_end || entry.event_start;
+      return last ? last >= today : !isClosed(entry);
+    })
+    // Events still to start come first by date; long programs already under way follow.
+    .sort((a, b) => Number(started(a)) - Number(started(b)) ||
+      (a.event_start || "9999").localeCompare(b.event_start || "9999") || a.title.localeCompare(b.title, "ko"));
+}
+
+function fillSelect(select, label, values) {
+  const current = select.value;
+  select.replaceChildren();
+  addText(select, "option", label).value = "";
+  [...values].sort((a, b) => a.localeCompare(b, "ko")).forEach((value) => { addText(select, "option", value).value = value; });
+  select.value = values.has(current) ? current : "";
+}
+
+function appendEvent(list, entry, compact = false) {
+  const item = addText(list, "li", "", "event");
+  const when = addText(item, "div", "", "when");
+  if (started(entry)) {
+    addText(when, "span", "진행 중");
+    addText(when, "strong", entry.event_end ? `~${shortDate(entry.event_end)}` : "–");
+  } else if (entry.event_start) {
+    addText(when, "span", `${entry.event_start.slice(0, 4)}.${Number(entry.event_start.slice(5, 7))}월`);
+    addText(when, "strong", String(Number(entry.event_start.slice(8, 10))));
+  } else {
+    addText(when, "strong", "–");
   }
-  if (selected === "home" && el("query").value.trim()) selectArea("all");
-  else reset();
-});
-el("source").addEventListener("change", reset);
-el("sort").addEventListener("change", reset);
-el("more").addEventListener("click", () => { limit += 20; render(); });
+  const body = addText(item, "div", "");
+  addLink(body, entry.title, entry.url);
+  if (compact) return;
+  const end = entry.event_end && entry.event_end !== entry.event_start ? ` ~ ${shortDate(entry.event_end)}` : "";
+  addText(body, "span", [entry.event_region || entry.place, (entry.event_types ?? []).join("·"),
+    entry.event_start ? `${shortDate(entry.event_start)}${end}` : "",
+    entry.deadline ? `신청 마감 ${shortDate(entry.deadline)}${entry.deadline_time ? " " + entry.deadline_time : ""}` : "",
+    sourceLabel(entry)].filter(Boolean).join(" · "), "sub");
+}
+
+function renderEvents() {
+  const events = upcomingEvents();
+  const regionSelect = el("event-region");
+  const typeSelect = el("event-type");
+  if (!regionSelect.options.length) {
+    fillSelect(regionSelect, "전체 지역", new Set(events.map((entry) => entry.event_region || entry.place).filter(Boolean)));
+    fillSelect(typeSelect, "전체 유형", new Set(events.flatMap((entry) => entry.event_types ?? [])));
+  }
+  const shown = events.filter((entry) =>
+    (!regionSelect.value || (entry.event_region || entry.place) === regionSelect.value) &&
+    (!typeSelect.value || (entry.event_types ?? []).includes(typeSelect.value)));
+  const list = el("event-list");
+  list.replaceChildren();
+  shown.slice(0, eventLimit).forEach((entry) => appendEvent(list, entry));
+  if (!shown.length) addText(list, "li", "조건에 맞는 행사가 없습니다.", "empty");
+  el("more-events").hidden = shown.length <= eventLimit;
+}
+
+/* ---------- 산업·기술 동향 ---------- */
+
+function trendColumns(container, size) {
+  container.replaceChildren();
+  const byDate = (a, b) => (b.published || "").localeCompare(a.published || "");
+  const columns = [
+    ["산업·시장", data.records.filter((entry) => entry.category === "industry").sort(byDate)],
+    ["특허·기술", data.records.filter((entry) => entry.category === "patent").sort(byDate)],
+  ];
+  for (const [title, entries] of columns) {
+    const column = addText(container, "div", "", "column");
+    addText(column, "h3", title);
+    entries.slice(0, size).forEach((entry) => {
+      const link = addLink(column, "", entry.url, "item");
+      link.append(entry.title);
+      addText(link, "span", [sourceLabel(entry), ...(entry.industry_sectors ?? []), entry.published && shortDate(entry.published)]
+        .filter(Boolean).join(" · "));
+    });
+    if (title === "특허·기술") addText(column, "p", "특허 동향은 특허 데이터 연계 후 제공 예정");
+  }
+  const supply = addText(container, "div", "", "column");
+  addText(supply, "h3", "공급망");
+  const briefing = addLink(supply, "KMI 글로벌 공급망 AI 일일 브리핑 →", "https://scm-briefing.kmi.re.kr/", "item");
+  addText(briefing, "span", "매일 갱신 · 해상 공급망 위기 모니터링");
+  const events = addText(container, "div", "", "column");
+  addText(events, "h3", "다가오는 행사");
+  const list = addText(events, "ol", "", "plain-list");
+  upcomingEvents().filter((entry) => entry.event_start && isMaritime(entry)).slice(0, size)
+    .forEach((entry) => appendEvent(list, entry, true));
+  if (!list.childElementCount) upcomingEvents().filter((entry) => entry.event_start).slice(0, size)
+    .forEach((entry) => appendEvent(list, entry, true));
+}
+
+/* ---------- 지원기관 안내 ---------- */
+
+function renderAgencies() {
+  const open = supportScope().filter((entry) => !isClosed(entry));
+  const inRegion = (entry, region) => region === "전국" ?
+    regionsOf(entry).includes("전국") || !regionsOf(entry).length : regionsOf(entry).includes(region);
+  const tiles = el("region-tiles");
+  tiles.replaceChildren();
+  for (const region of [...TILE_ORDER, "전국"]) {
+    const agencies = new Set(open.filter((entry) => inRegion(entry, region)).map(sourceLabel));
+    const button = addText(tiles, "button", "", region === "전국" ? "national" : "");
+    button.type = "button";
+    button.append(region === "전국" ? "전국 단위 기관" : region);
+    addText(button, "small", `기관 ${agencies.size}`);
+    button.setAttribute("aria-pressed", String(region === agencyRegion));
+    button.addEventListener("click", () => { agencyRegion = region; renderAgencies(); });
+  }
+  const counts = new Map();
+  open.filter((entry) => inRegion(entry, agencyRegion)).forEach((entry) => {
+    counts.set(sourceLabel(entry), (counts.get(sourceLabel(entry)) ?? 0) + 1);
+  });
+  el("agency-region").textContent = agencyRegion === "전국" ? "전국 단위 기관" : agencyRegion;
+  const rows = el("agency-rows");
+  rows.replaceChildren();
+  [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")).forEach(([name, count]) => {
+    const row = addText(rows, "li", "", "agency");
+    addText(row, "strong", name);
+    addText(row, "span", `공고 ${count}건`);
+  });
+  if (!counts.size) addText(rows, "li", "이 지역에서 지금 수집된 공고가 없습니다.", "empty");
+}
+
+/* ---------- 화면 전환 ---------- */
+
+function currentView() {
+  const view = location.hash.replace("#", "");
+  return ["support", "events", "trends", "agencies"].includes(view) ? view : "support";
+}
+
+function show() {
+  const view = currentView();
+  for (const name of ["support", "events", "trends", "agencies"]) el(`view-${name}`).hidden = name !== view;
+  for (const link of document.querySelectorAll(".main-nav a")) {
+    if (link.dataset.view === view) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  el("digest").hidden = view === "trends";
+  if (view === "support") renderSupport();
+  if (view === "events") renderEvents();
+  if (view === "trends") trendColumns(el("trend-columns"), 20);
+  if (view === "agencies") renderAgencies();
+  trendColumns(el("digest-columns"), 3);
+}
+
+function resetSupport() {
+  limit = PAGE;
+  renderSupport();
+}
+
+function setup() {
+  addText(el("region"), "option", "전체 지역").value = "";
+  REGIONS.forEach((region) => { addText(el("region"), "option", region).value = region; });
+  addText(el("benefit"), "option", "모든 지원").value = "";
+  addText(el("benefit"), "option", "R&D 과제").value = "rnd";
+  Object.entries(data.support_facets?.types ?? {}).forEach(([key, label]) => {
+    addText(el("benefit"), "option", label).value = key;
+  });
+  for (const id of ["region", "age", "benefit", "maritime-only"]) el(id).addEventListener("change", resetSupport);
+  el("query").addEventListener("input", resetSupport);
+  for (const button of document.querySelectorAll(".status-tabs button")) {
+    button.addEventListener("click", () => { status = button.dataset.status; resetSupport(); });
+  }
+  el("preset-koceanx").addEventListener("click", () => {
+    el("region").value = "부산";
+    el("age").value = "";
+    resetSupport();
+  });
+  el("more").addEventListener("click", () => { limit += PAGE; renderSupport(); });
+  el("event-region").addEventListener("change", () => { eventLimit = 40; renderEvents(); });
+  el("event-type").addEventListener("change", () => { eventLimit = 40; renderEvents(); });
+  el("more-events").addEventListener("click", () => { eventLimit += 40; renderEvents(); });
+  window.addEventListener("hashchange", show);
+
+  const timestamp = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short",
+  }).format(new Date(data.updated_at));
+  const agencies = new Set(supportScope().map(sourceLabel));
+  el("support-meta").textContent =
+    `지원기관 ${agencies.size.toLocaleString("ko-KR")}곳 · 공고 ${supportScope().length.toLocaleString("ko-KR")}건 · ${timestamp} 갱신`;
+  el("updated").textContent = data.sample ? "저장된 응답으로 만든 시험 데이터" : `마지막 갱신 ${timestamp}`;
+}
 
 const dataUrl = new URL("./data.json", document.currentScript.src);
 dataUrl.search = new URL(document.currentScript.src).search;
@@ -498,21 +415,9 @@ fetch(dataUrl, {cache: "no-cache"})
   })
   .then((payload) => {
     data = payload;
-    Object.entries(data.sources).forEach(([key, label]) => {
-      addText(el("source"), "option", label).value = key;
-    });
-    const timestamp = new Intl.DateTimeFormat("ko-KR", {
-      timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short",
-    }).format(new Date(data.updated_at));
-    el("updated").textContent = data.sample ? "저장된 응답으로 만든 시험 데이터" : `마지막 갱신 ${timestamp}`;
-    const dataDate = new Intl.DateTimeFormat("ko-KR", {
-      timeZone: "Asia/Seoul", month: "long", day: "numeric",
-    }).format(new Date(data.updated_at));
-    el("briefing-date").textContent = `${dataDate} 수집 기준`;
-    ready = true;
-    fillSectionFilters();
-    render();
+    setup();
+    show();
   })
   .catch(() => {
-    el("summary").textContent = "정보를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.";
+    el("support-meta").textContent = "정보를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.";
   });

@@ -609,14 +609,19 @@ def keyed(url, key_param, key, **values):
     return f"{url}?{key_param}={encoded}&{urlencode(values)}"
 
 
-def region_hint(title, authority="", tags=()):
+def region_hint(title, authority="", tags=(), organizer=""):
     prefix = re.match(r"\s*\[([^\]]+)\]", title or "")
     if prefix:
         names = [name for name in SHORT_REGIONS if name in prefix[1]]
         if names:
             return names
-    if authority in LONG_REGIONS:
-        return [LONG_REGIONS[authority]]
+    # A provincial authority or a regional agency named after its province, e.g. 울산테크노파크.
+    for name in (authority or "", organizer or ""):
+        for long, short in LONG_REGIONS.items():
+            if name.startswith(long):
+                return [short]
+        if name.startswith(tuple(SHORT_REGIONS)) and not name.startswith(("경제", "대한")):
+            return [next(short for short in SHORT_REGIONS if name.startswith(short))]
     tagged = {name for tag in tags for name in SHORT_REGIONS if tag in (name, "전남광주") and name in tag}
     return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
 
@@ -698,6 +703,8 @@ def bizinfo_api(get, key):
         if not re.fullmatch(r"PBLN_\d+", number) or not title:
             continue
         organizer = clean(item.get("excInsttNm"))
+        if organizer in ("", "기초자치단체", "직접수행", "-"):
+            organizer = clean(item.get("jrsdInsttNm"))  # placeholder values name no agency
         keep, label = judge(title, organizer, clean(item.get("trgetNm")))
         if not keep:
             dropped[label] = dropped.get(label, 0) + 1
@@ -708,7 +715,7 @@ def bizinfo_api(get, key):
             continue
         tags = [tag.strip() for tag in re.split(r"[,#]", item.get("hashtags") or "") if tag.strip()]
         is_rnd = bool(planning_type(title) or RND_TITLE.search(title))
-        hints = {"regions": region_hint(title, clean(item.get("jrsdInsttNm")), tags)}
+        hints = {"regions": region_hint(title, clean(item.get("jrsdInsttNm")), tags, organizer)}
         field = BIZINFO_FIELDS.get(clean(item.get("pldirSportRealmLclasCodeNm")))
         if field:
             hints["types"] = [field]
