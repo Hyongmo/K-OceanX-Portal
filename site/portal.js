@@ -250,8 +250,7 @@ function renderMine() {
   pressChips(el("marine-tech"), finder.techs);
   pressChips(el("innovation"), finder.techs);
   pressChips(el("regions"), finder.regions);
-  el("region-none").setAttribute("aria-pressed", String(!finder.regions.length));
-  pressChips(el("ages"), [finder.age || "any"]);
+  pressChips(el("ages"), [finder.age]);
   const terms = searchTerms(el("query").value.trim());
   const groups = {industry: [], tech: [], common: [], open: [], check: []};
   const out = {region: 0, age: 0, industry: 0, rnd: 0};
@@ -393,12 +392,12 @@ function setupSupport() {
   chipGroup(el("marine-tech"), MARINE_TECH_LIST, mine, "techs");
   chipGroup(el("innovation"), INNOVATION_LIST, mine, "techs");
   chipGroup(el("regions"), REGIONS.map((region) => [region, region]), mine, "regions");
-  el("region-none").addEventListener("click", () => { finder.regions = []; benefit = ""; resetSupport(); });
-  for (const [key, label] of [["any", "업력 무관"], ...AGE_LIST]) {
+  // A company has one age band; pressing the chosen band again clears it.
+  for (const [key, label] of AGE_LIST) {
     const chip = addText(el("ages"), "button", label);
     chip.type = "button";
     chip.dataset.key = key;
-    chip.addEventListener("click", () => { finder.age = key === "any" ? "" : key; benefit = ""; resetSupport(); });
+    chip.addEventListener("click", () => { finder.age = finder.age === key ? "" : key; benefit = ""; resetSupport(); });
   }
   chipGroup(el("all-ages"), [...AGE_LIST, ["none", "업력 미특정"]], all, "ages");
   chipGroup(el("all-regions"), [["전국", "전국 대상"], ...REGIONS.map((region) => [region, region])], all, "regions");
