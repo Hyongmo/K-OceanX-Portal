@@ -55,6 +55,9 @@ jobs:
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          BIZINFO_API_KEY: ${{ secrets.BIZINFO_API_KEY }}
+          BIZINFO_EVENT_API_KEY: ${{ secrets.BIZINFO_EVENT_API_KEY }}
+          KSTARTUP_API_KEY: ${{ secrets.KSTARTUP_API_KEY }}
       - uses: actions/upload-pages-artifact@v4
         if: "(!inputs.check_naver && !inputs.check_apis) || inputs.publish"
         with:

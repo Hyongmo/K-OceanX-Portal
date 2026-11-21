@@ -5,10 +5,127 @@ from unittest.mock import patch
 from ddgs.exceptions import DDGSException
 
 from collect import (
-    NOR_SHIPPING, announcements, bistep_planning, classify_information, merge_exhibitions, nia_planning,
-    nor_shipping, planning_fields, pohang_support, record,
+    NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
+    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, planning_fields,
+    pohang_support, record,
 )
 from support_taxonomy import classify_support
+from target_rules import judge
+
+
+class TargetRulesTest(unittest.TestCase):
+    def test_keeps_maritime_and_open_programs_and_drops_others(self):
+        cases = [
+            ("2026년 친환경 쇄빙ㆍ내빙선 신조 지원사업", True, "해양 특화"),
+            ("[경남] 거제시 조선협력사 중소기업 육성자금", True, "해양 특화"),
+            ("2026년 중소기업 수출물류비 지원사업", True, "업종 무관"),
+            ("조선일보 연계 중소기업 홍보 지원", True, "업종 무관"),
+            ("[부산] 소상공인 경영안정자금 지원", False, "소상공인 대상"),
+            ("[전남] 완도군 청년어촌정착 지원사업", False, "어업인 개인 지원"),
+            ("수산자원보호 직접지불금 신청 공고", False, "어업인 개인 지원"),
+            ("AI융합 의료기기 성능 평가 지원", False, "다른 업종 한정"),
+            ("해외 저작권 바우처 사업 수행기관 모집", False, "기업지원 아님"),
+            ("서천 해양 블루바이오 예비창업자 지원", True, "해양 특화"),
+        ]
+        for title, keep, label in cases:
+            with self.subTest(title=title):
+                self.assertEqual(judge(title), (keep, label))
+
+    def test_small_merchant_target_is_dropped_unless_companies_qualify(self):
+        self.assertEqual(judge("배달 홍보 지원", target="소상공인")[0], False)
+        self.assertEqual(judge("홍보 지원", target="중소기업, 소상공인")[0], True)
+
+
+class OfficialApiTest(unittest.TestCase):
+    def test_date_ranges_keep_start_end_and_time(self):
+        self.assertEqual(date_range("20261118 ~ 20261125"), ("2026-11-18", "2026-11-25", ""))
+        self.assertEqual(date_range("2026-11-16 ~ 2026-12-18 18:00"), ("2026-11-16", "2026-12-18", "18:00"))
+        self.assertEqual(date_range("20261218"), ("", "2026-12-18", ""))
+        self.assertEqual(date_range("예산 소진시까지"), ("", "", ""))
+
+    def test_kstartup_api_keeps_open_eligible_notices_with_official_fields(self):
+        items = [
+            {"pbanc_sn": "179815", "biz_pbanc_nm": "KDB NextONE 부산 6기 모집", "pbanc_rcpt_bgng_dt": "20261116",
+             "pbanc_rcpt_end_dt": "20261218", "pbanc_ntrp_nm": "(주)시리즈벤처스", "supt_regin": "부산",
+             "biz_enyy": "1년미만,3년미만,7년미만", "supt_biz_clsfc": "시설ㆍ공간ㆍ보육",
+             "aply_trgt": "일반기업", "aply_trgt_ctnt": "창업 7년 이내 법인"},
+            {"pbanc_sn": "1", "biz_pbanc_nm": "마감된 공고", "pbanc_rcpt_end_dt": "20261101"},
+            {"pbanc_sn": "2", "biz_pbanc_nm": "소상공인 온라인 판로 지원", "pbanc_rcpt_end_dt": "20261230"},
+        ]
+
+        def get(name, url):
+            self.assertEqual(name, "kstartup_api")
+            self.assertIn("serviceKey=a%2Bb", url)
+            return json.dumps({"data": items, "totalCount": 3}).encode()
+
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            row, = kstartup_api(get, "a+b")
+        classify_support(row)
+        self.assertEqual(row["id"], "kstartup:179815")
+        self.assertTrue(row["url"].startswith("https://www.k-startup.go.kr/"))
+        self.assertEqual((row["opens"], row["deadline"]), ("2026-11-16", "2026-12-18"))
+        self.assertEqual(row["publisher"], "(주)시리즈벤처스")
+        self.assertEqual(row["support"]["regions"], ["부산"])
+        self.assertIn("scaleup", row["support"]["stages"])
+        self.assertIn("infrastructure", row["support"]["types"])
+        self.assertNotIn("support_hints", row)
+
+    def test_bizinfo_api_routes_rnd_and_reads_regions(self):
+        items = [
+            {"pblancId": "PBLN_1", "pblancNm": "[부산] 해양산업 기술 경쟁력 강화 지원", "excInsttNm": "부산경제진흥원",
+             "jrsdInsttNm": "부산광역시", "reqstBeginEndDe": "20261101 ~ 20261130", "trgetNm": "중소기업",
+             "pldirSportRealmLclasCodeNm": "기술", "hashtags": "기술,부산", "creatPnttm": "2026-11-01 09:00:00"},
+            {"pblancId": "PBLN_2", "pblancNm": "2026년 3차 기계장비산업기술개발사업 신규지원 대상과제 공고",
+             "excInsttNm": "한국산업기술기획평가원", "jrsdInsttNm": "산업통상부",
+             "reqstBeginEndDe": "20261029 ~ 20261130", "hashtags": "서울,부산,대구,경남"},
+            {"pblancId": "PBLN_3", "pblancNm": "[경남] 일반음식점 우수업소 지정", "reqstBeginEndDe": "20261201"},
+        ]
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            rows = bizinfo_api(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
+        support, rnd = rows
+        classify_support(support)
+        self.assertEqual(support["support"]["regions"], ["부산"])
+        self.assertTrue(support["maritime"])
+        self.assertEqual(rnd["category"], "rnd")
+        self.assertEqual(rnd["planning_stage"], "application")
+        self.assertEqual(rnd["publisher"], "한국산업기술기획평가원")
+
+    def test_bizinfo_events_drop_finished_events(self):
+        items = [
+            {"eventInfoId": "EVEN_1", "nttNm": "[전국] 수출 상담회 개최", "eventBeginEndDe": "20261201 ~ 20261202",
+             "areaNm": "전국", "eventInfoTyNm": "상담회", "bizinfoUrl": "https://www.bizinfo.go.kr/e/1",
+             "rceptPd": "2026-11-20 ~ 2026-11-28"},
+            {"eventInfoId": "EVEN_2", "nttNm": "지난 설명회", "eventBeginEndDe": "20261101 ~ 20261101",
+             "bizinfoUrl": "https://www.bizinfo.go.kr/e/2"},
+        ]
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            row, = bizinfo_events(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
+        self.assertEqual((row["category"], row["event_start"], row["deadline"]),
+                         ("domestic", "2026-12-01", "2026-11-28"))
+
+    def test_komeri_reads_period_and_target_from_recent_notices(self):
+        listing = ('<div class="bbsBox"><div class="title bo_tit"><a href="https://www.komeri.re.kr/bbs/board.php?'
+                   'bo_table=business&amp;wr_id=231">울산지역 GVC 진출 기업지원사업 수혜기업 모집</a></div>'
+                   '<div class="date">2026-11-17</div></div>'
+                   '<div class="bbsBox"><div class="title bo_tit"><a href="https://www.komeri.re.kr/bbs/board.php?'
+                   'bo_table=business&amp;wr_id=10">오래된 공고</a></div><div class="date">2025-01-02</div></div>')
+        detail = ('<div id="bo_v_con">□ 지원대상 : 울산지역 조선해양기자재 중소기업\n'
+                  '□ 모집기간 : 2026. 11. 16. (월) ~ 2026. 11. 28. (금), 18시 까지</div>')
+
+        def get(name, url):
+            return (detail if "wr_id=231" in url else listing).encode()
+
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            row, = komeri(get)
+        self.assertEqual(row["deadline"], "2026-11-28")
+        self.assertEqual(row["eligibility"], "울산지역 조선해양기자재 중소기업")
+
+    def test_hub_duplicates_keep_kstartup_copy(self):
+        first = record("kstartup", "1", "2026 해양수산 창업 지원 모집", "https://example.org/", "support")
+        copy = record("bizinfo", "PBLN_1", "2026 해양수산 창업 지원 모집", "https://example.org/b", "support")
+        rows = {row["id"]: row for row in (first, copy)}
+        drop_hub_duplicates(rows)
+        self.assertEqual(list(rows), ["kstartup:1"])
 
 
 class SupportTaxonomyTest(unittest.TestCase):

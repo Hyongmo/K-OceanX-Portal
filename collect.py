@@ -1,7 +1,7 @@
 """Collect source metadata and build the static K-OceanX portal."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import gzip
 from io import BytesIO
 import json
@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import unicodedata
-from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
@@ -21,6 +21,7 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
+from target_rules import judge
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -480,7 +481,8 @@ def iris(get):
         rows.append(record("iris", ":".join(args[i] for i in (0, 2, 3)), title,
                            params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]),
                            "rnd", deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
-    return [row for row in require(rows) if MARINE.search(row["title"]) or AI.search(row["title"])]
+    # Government R&D is open to every industry unless the notice names another one.
+    return [row for row in require(rows) if judge(row["title"])[0]]
 
 
 def kmi(get):
@@ -542,6 +544,263 @@ def kstartup(get):
                 fields[field] = iso(match[1])
         rows.append(record("kstartup", key, title, params(url, schM="view", pbancSn=key), "support", **fields))
     return require(rows)
+
+
+KSTARTUP_PAGE = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do"
+KSTARTUP_API = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
+BIZINFO_API = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
+BIZINFO_EVENT_API = "https://www.bizinfo.go.kr/uss/rss/bizinfoEventApi.do"
+API_KEYS = ("KSTARTUP_API_KEY", "BIZINFO_API_KEY", "BIZINFO_EVENT_API_KEY")
+SHORT_REGIONS = [name for name in REGIONS if name not in ("전국", "해외")]
+LONG_REGIONS = {
+    "서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구", "인천광역시": "인천", "광주광역시": "광주",
+    "대전광역시": "대전", "울산광역시": "울산", "세종특별자치시": "세종", "경기도": "경기", "강원특별자치도": "강원",
+    "강원도": "강원", "충청북도": "충북", "충청남도": "충남", "전북특별자치도": "전북", "전라북도": "전북",
+    "전라남도": "전남", "경상북도": "경북", "경상남도": "경남", "제주특별자치도": "제주",
+}
+DATE_TIME = re.compile(r"(20\d{2})[.\-/\s]*(\d{1,2})[.\-/\s]*(\d{1,2})(?:\D{0,4}?((?:[01]\d|2[0-3]):[0-5]\d))?")
+RND_TITLE = re.compile(r"R&D|연구개발|기술개발\s*사업|신규\s*(?:지원\s*)?(?:대상\s*)?과제|과제\s*공모")
+# Official program fields mapped onto the portal's support facets.
+KSTARTUP_FIELDS = {
+    "사업화": {"types": ["commercial"]},
+    "시설ㆍ공간ㆍ보육": {"types": ["infrastructure", "incubation"], "methods": ["access"]},
+    "멘토링ㆍ컨설팅ㆍ교육": {"methods": ["service"]},
+    "창업교육": {"methods": ["service"]},
+    "행사ㆍ네트워크": {"methods": ["matching"]},
+    "인력": {"types": ["people"]},
+    "정책자금": {"types": ["finance"], "methods": ["loan"]},
+    "융자ㆍ보증": {"types": ["finance"], "methods": ["loan"]},
+    "판로ㆍ해외진출": {"types": ["export"]},
+    "글로벌": {"types": ["export"]},
+    "기술개발(R&D)": {"types": ["research"]},
+}
+BIZINFO_FIELDS = {
+    "금융": "finance", "기술": "technical", "인력": "people", "수출": "export",
+    "내수": "commercial", "창업": "incubation", "경영": "management",
+}
+
+
+def kst_today():
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+
+
+def date_range(text):
+    """Return (first date, last date, last time) from an official period string."""
+    found = []
+    for year, month, day, clock in DATE_TIME.findall(str(text or "")):
+        value = iso(f"{year}-{int(month):02}-{int(day):02}")
+        if value:
+            found.append((value, clock))
+    if not found:
+        return "", "", ""
+    if len(found) == 1:
+        return "", found[0][0], found[0][1]
+    return found[0][0], found[-1][0], found[-1][1]
+
+
+def shorten(value, limit=160):
+    text = clean(value)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def keyed(url, key_param, key, **values):
+    # Public Data Portal keys may be stored already URL-encoded.
+    encoded = key if "%" in key else quote(key, safe="")
+    return f"{url}?{key_param}={encoded}&{urlencode(values)}"
+
+
+def region_hint(title, authority="", tags=()):
+    prefix = re.match(r"\s*\[([^\]]+)\]", title or "")
+    if prefix:
+        names = [name for name in SHORT_REGIONS if name in prefix[1]]
+        if names:
+            return names
+    if authority in LONG_REGIONS:
+        return [LONG_REGIONS[authority]]
+    tagged = {name for tag in tags for name in SHORT_REGIONS if tag in (name, "전남광주") and name in tag}
+    return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
+
+
+def kstartup_regions(value):
+    names = set()
+    for part in re.split(r"[,·ㆍ/\s]+", value or ""):
+        part = LONG_REGIONS.get(part, part)
+        if part in REGIONS:
+            names.add(part)
+    return sorted(names) or ["전국"]
+
+
+def kstartup_stages(value):
+    stages = set()
+    if "예비" in (value or ""):
+        stages.add("prestartup")
+    if re.search(r"(?<!\d)[123]년\s*미만", value or ""):
+        stages.add("early")
+    if re.search(r"(?:5|7|10)년\s*(?:미만|이상)", value or ""):
+        stages.add("scaleup")
+    return sorted(stages)
+
+
+def tally(source, counts, kept):
+    dropped = ", ".join(f"{label} {count}" for label, count in sorted(counts.items()))
+    print(f"{source}: 포함 {kept}" + (f" / 제외 {dropped}" if dropped else ""), flush=True)
+
+
+def kstartup_api(get, key):
+    today = kst_today()
+    rows, dropped, page_no = [], {}, 1
+    while page_no <= 30:
+        data = json.loads(get("kstartup_api", keyed(KSTARTUP_API, "serviceKey", key, page=page_no, perPage=100,
+                                                     returnType="json", **{"cond[rcrt_prgs_yn::EQ]": "Y"})))
+        items = data.get("data") or []
+        for item in items:
+            number = str(item.get("pbanc_sn") or "").strip()
+            title = clean(item.get("biz_pbanc_nm"))
+            if not number.isdigit() or not title:
+                continue
+            opens = date_range(item.get("pbanc_rcpt_bgng_dt"))[1]
+            _, deadline, clock = date_range(item.get("pbanc_rcpt_end_dt"))
+            if deadline and deadline < today:
+                dropped["마감"] = dropped.get("마감", 0) + 1
+                continue
+            organizer = clean(item.get("pbanc_ntrp_nm"))
+            keep, label = judge(title, organizer, clean(item.get("aply_trgt")))
+            if not keep:
+                dropped[label] = dropped.get(label, 0) + 1
+                continue
+            hints = {}
+            for name in re.split(r"[,]\s*", clean(item.get("supt_biz_clsfc"))):
+                for field, values in KSTARTUP_FIELDS.get(name, {}).items():
+                    hints.setdefault(field, []).extend(values)
+            stages = kstartup_stages(clean(item.get("biz_enyy")))
+            if stages:
+                hints["stages"] = stages
+            hints["regions"] = kstartup_regions(clean(item.get("supt_regin")))
+            rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
+                               "support", opens=opens, deadline=deadline, deadline_time=clock,
+                               publisher=organizer, eligibility=shorten(item.get("aply_trgt_ctnt")),
+                               maritime=label == "해양 특화", support_hints=hints))
+        total = int(data.get("totalCount") or 0)
+        if not items or page_no * 100 >= total:
+            break
+        page_no += 1
+    tally("kstartup", dropped, len(rows))
+    return require(rows)
+
+
+def bizinfo_api(get, key):
+    today = kst_today()
+    data = json.loads(get("bizinfo_api", keyed(BIZINFO_API, "crtfcKey", key, dataType="json", searchCnt=0)))
+    rows, dropped = [], {}
+    for item in require(data.get("jsonArray") or []):
+        number = str(item.get("pblancId") or "")
+        title = clean(item.get("pblancNm"))
+        if not re.fullmatch(r"PBLN_\d+", number) or not title:
+            continue
+        organizer = clean(item.get("excInsttNm"))
+        keep, label = judge(title, organizer, clean(item.get("trgetNm")))
+        if not keep:
+            dropped[label] = dropped.get(label, 0) + 1
+            continue
+        opens, deadline, clock = date_range(item.get("reqstBeginEndDe"))
+        if deadline and deadline < today:
+            dropped["마감"] = dropped.get("마감", 0) + 1
+            continue
+        tags = [tag.strip() for tag in re.split(r"[,#]", item.get("hashtags") or "") if tag.strip()]
+        is_rnd = bool(planning_type(title) or RND_TITLE.search(title))
+        hints = {"regions": region_hint(title, clean(item.get("jrsdInsttNm")), tags)}
+        field = BIZINFO_FIELDS.get(clean(item.get("pldirSportRealmLclasCodeNm")))
+        if field:
+            hints["types"] = [field]
+        rows.append(record("bizinfo", number, title,
+                           params("https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do", pblancId=number),
+                           "rnd" if is_rnd else "support", published=iso(str(item.get("creatPnttm") or "")[:10]),
+                           opens=opens, deadline=deadline, deadline_time=clock, publisher=organizer,
+                           topic=shorten(item.get("bsnsSumryCn"), 140), eligibility=shorten(item.get("trgetNm"), 80),
+                           planning_stage=(planning_type(title) or "application") if is_rnd else "",
+                           place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
+                           maritime=label == "해양 특화", support_hints=hints))
+    tally("bizinfo", dropped, len(rows))
+    return rows
+
+
+def bizinfo_events(get, key):
+    today = kst_today()
+    data = json.loads(get("bizinfo_event_api", keyed(BIZINFO_EVENT_API, "crtfcKey", key, dataType="json", searchCnt=0)))
+    rows, dropped = [], {}
+    for item in require(data.get("jsonArray") or []):
+        number = str(item.get("eventInfoId") or "")
+        title = clean(item.get("nttNm"))
+        if not re.fullmatch(r"EVEN_\d+", number) or not title:
+            continue
+        start, end, _ = date_range(item.get("eventBeginEndDe"))
+        start = start or end
+        if (end or start) and (end or start) < today:
+            dropped["종료"] = dropped.get("종료", 0) + 1
+            continue
+        organizer = clean(item.get("originEngnNm"))
+        keep, label = judge(title, organizer)
+        if not keep:
+            dropped[label] = dropped.get(label, 0) + 1
+            continue
+        url = next((value for value in (item.get("bizinfoUrl"), item.get("orginlUrlAdres"))
+                    if str(value or "").startswith("https://")), "")
+        if not url:
+            dropped["원문 주소 없음"] = dropped.get("원문 주소 없음", 0) + 1
+            continue
+        opens, deadline, clock = date_range(item.get("rceptPd"))
+        area = clean(item.get("areaNm"))
+        kind = clean(item.get("eventInfoTyNm"))
+        rows.append(record("bizinfo_event", number, title, url,
+                           "international" if re.search(r"해외|국외", area) else "domestic",
+                           event_start=start, event_end=end, opens=opens, deadline=deadline, deadline_time=clock,
+                           event_region=area, publisher=organizer, topic=shorten(item.get("nttCn"), 140),
+                           event_types=[kind] if kind else [], maritime=label == "해양 특화"))
+    tally("bizinfo_event", dropped, len(rows))
+    return rows
+
+
+def komeri(get):
+    base = "https://www.komeri.re.kr/bbs/board.php"
+    boxes = require(page(get, "komeri", params(base, bo_table="business")).select(".bbsBox"))
+    today = date.fromisoformat(kst_today())
+    rows = []
+    for box in boxes:
+        link = box.select_one('.title a[href*="wr_id="]')
+        posted = box.select_one(".date")
+        if not link or not posted:
+            continue
+        number = parse_qs(urlsplit(link["href"]).query).get("wr_id", [""])[0]
+        published = iso(posted.get_text(strip=True))
+        title = link.get_text(" ", strip=True)
+        # Only recent notices can still be open; older ones are skipped without a detail request.
+        if not number.isdigit() or not published or (today - date.fromisoformat(published)).days > 90:
+            continue
+        if not judge(title)[0]:
+            continue
+        url = params(base, bo_table="business", wr_id=number)
+        body = page(get, "komeri", url).select_one("#bo_v_con")
+        text = body.get_text("\n", strip=True) if body else ""
+        fields = {}
+        period = re.search(r"(?:모집|접수|신청)\s*기간\s*:\s*([^\n]+)", text)
+        if period:
+            fields.update(planning_period(period[1]))
+        target = re.search(r"지원\s*대상\s*:\s*([^\n□※]{1,160})", text)
+        if target:
+            fields["eligibility"] = target[1].strip()
+        if fields.get("deadline") and fields["deadline"] < today.isoformat():
+            continue
+        rows.append(record("komeri", number, title, url, "support", published=published,
+                           publisher="한국조선해양기자재연구원", maritime=True, **fields))
+    return rows
+
+
+def drop_hub_duplicates(records):
+    """Keep the K-Startup copy when Bizinfo republishes the same notice."""
+    key = lambda title: re.sub(r"[^가-힣A-Za-z0-9]", "", title)[:40]
+    startup = {key(row["title"]) for row in records.values() if row["source"] == "kstartup"}
+    for record_id in [i for i, row in records.items() if row["source"] == "bizinfo" and key(row["title"]) in startup]:
+        del records[record_id]
 
 
 def bisfe(get):
@@ -872,6 +1131,17 @@ def build(samples):
         sources["nia_planning"] = ("NIA·AI허브", nia_planning)
         sources["nipa_demand"] = ("NIPA·NXT 수요조사", nipa_demand)
         sources["keit_planning"] = ("KEIT 과제기획", keit_planning)
+        sources["komeri"] = ("한국조선해양기자재연구원", komeri)
+        keys = {name: os.getenv(name, "").strip() for name in API_KEYS}
+        missing = [name for name in ("KSTARTUP_API_KEY", "BIZINFO_API_KEY") if not keys[name]]
+        if missing and os.getenv("GITHUB_ACTIONS") == "true":
+            raise SystemExit("Missing Actions Secrets: " + ", ".join(missing))
+        if keys["KSTARTUP_API_KEY"]:
+            sources["kstartup"] = ("K-Startup", lambda get: kstartup_api(get, keys["KSTARTUP_API_KEY"]))
+        if keys["BIZINFO_API_KEY"]:
+            event_key = keys["BIZINFO_EVENT_API_KEY"] or keys["BIZINFO_API_KEY"]
+            sources["bizinfo"] = ("기업마당", lambda get: bizinfo_api(get, keys["BIZINFO_API_KEY"]))
+            sources["bizinfo_event"] = ("기업마당 행사정보", lambda get: bizinfo_events(get, event_key))
 
     records, failed = {}, []
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -887,6 +1157,7 @@ def build(samples):
     if failed:
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
+    drop_hub_duplicates(records)
     for entry in records.values():
         classify_information(entry)
         classify_support(entry)

@@ -90,9 +90,13 @@ REVIEWED = {
 
 
 def classify_support(entry):
+    # Official API fields arrive as hints; they are merged here and never published as-is.
+    hints = entry.pop("support_hints", {})
     if entry["category"] != "support":
         return
-    review = REVIEWED.get(entry["id"], {})
+    review = {field: (*REVIEWED.get(entry["id"], {}).get(field, ()), *hints.get(field, ()))
+              for field in ("types", "stages", "methods", "regions")}
+    review["eligibility"] = REVIEWED.get(entry["id"], {}).get("eligibility", "")
     title = entry["title"]
     if re.search(r"용역\s*(입찰|대행)|^(?:\[마감\]\s*)?KIMST 지원 연구\s*,", title):
         return
