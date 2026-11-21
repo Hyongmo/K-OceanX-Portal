@@ -137,6 +137,9 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(agency_region("여수시"), "전남")
         self.assertEqual(agency_region("남서울대학교 창업보육센터"), "")
         self.assertEqual(agency_region("한국산업기술기획평가원", "산업통상부"), "")
+        registry = agency_registry([{"agency": "한국무역보험공사"}],
+                                   {"한국무역보험공사": {"region": "서울", "last_seen": "2026-11-20"}}, "2026-11-21")
+        self.assertEqual(registry["한국무역보험공사"], {"region": "", "last_seen": "2026-11-21"})
         self.assertEqual(agency_name("(재) 대구창조경제혁신센터 대표이사"), "대구창조경제혁신센터")
         self.assertEqual(agency_name("서울기후테크산업지원센터장"), "서울기후테크산업지원센터")
         registry = agency_registry([{"agency": "부산테크노파크", "agency_region": "부산"}],

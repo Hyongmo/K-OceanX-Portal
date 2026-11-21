@@ -740,13 +740,13 @@ def agency_registry(records, previous, today):
     """Agencies seen in this or any earlier collection, so an agency with no notice today stays listed.
     `previous` is the agency list of the data published last time."""
     registry = {name: dict(info) for name, info in (previous or {}).items() if name}
+    seen = {}
     for entry in records:
-        name = entry.get("agency")
-        if not name:
-            continue
-        info = registry.setdefault(name, {})
-        info["region"] = entry.get("agency_region") or info.get("region", "")
-        info["last_seen"] = today
+        if entry.get("agency"):
+            seen.setdefault(entry["agency"], set()).add(entry.get("agency_region", ""))
+    for name, regions in seen.items():
+        # An agency collected again takes the location read this time, so a correction sticks.
+        registry[name] = {"region": sorted(regions - {""})[0] if regions - {""} else "", "last_seen": today}
     return dict(sorted(registry.items()))
 
 
@@ -907,7 +907,7 @@ def bizinfo_api(get, key):
                            topic=shorten(item.get("bsnsSumryCn"), 140),
                            eligibility=shorten(target or item.get("trgetNm"), 120),
                            target_full=target or clean(item.get("trgetNm")), content_full=summary,
-                           agency_region=agency_region(organizer, clean(item.get("jrsdInsttNm"))),
+                           agency_region=agency_region(organizer),
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
                            maritime=label == "해양 특화", support_hints=hints))

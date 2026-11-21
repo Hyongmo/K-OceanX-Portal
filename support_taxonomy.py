@@ -69,14 +69,14 @@ METHOD_TERMS = {
     "loan": r"융자|정책자금\s*대출|신용보증|이차보전",
 }
 
-# Facts reviewed against the linked K-Startup notices. Regions describe the program,
-# while eligibility preserves the actual regional requirements or preferences.
+# Facts reviewed against the linked K-Startup notices. A region is kept only where the
+# notice limits applicants to it (179824 requires an office in Seoul); where a region is
+# only preferred (179815) or the notice states no limit (179832), the notice's content decides.
 REVIEWED = {
     "kstartup:179815": {
         "types": ("incubation", "infrastructure", "finance", "export"),
         "stages": ("early", "scaleup"),
         "methods": ("access", "service", "matching", "equity"),
-        "regions": ("부산",),
         "eligibility": "혁신성장산업의 창업 7년 이내 법인. 부울경 소재 및 일부 전략산업 기업 우대.",
     },
     "kstartup:179824": {
@@ -88,7 +88,6 @@ REVIEWED = {
     },
     "kstartup:179832": {
         "methods": ("matching",),
-        "regions": ("서울",),
     },
 }
 
