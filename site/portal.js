@@ -119,8 +119,8 @@ const BENEFITS = [
 ];
 const BENEFIT_LABELS = Object.fromEntries(BENEFITS.map(([key, label]) => [key, label]));
 const FINDER_PAGE = 30;
-// Two tabs. "우리 회사" leaves out what the company cannot apply to;
-// "특정 공고" keeps only the notices that match every chosen condition.
+// Two tabs. "신청 가능 공고" leaves out what the company cannot apply to;
+// "특정 분야 공고" keeps only the notices that match every chosen condition.
 const STORE = "koceanx-finder-4";
 const TABS = ["company", "notice"];
 const blank = () => ({industries: [], techs: [], regions: [], ages: [], benefits: []});
@@ -159,7 +159,7 @@ function industryNames(keys) {
   return names.join("·");
 }
 
-// 우리 회사: what the company cannot apply to is left out, with the reason counted.
+// 신청 가능 공고: what the company cannot apply to is left out.
 function companyCheck(entry, picks) {
   const regions = regionsOf(entry);
   const ages = agesOf(entry);
@@ -177,7 +177,7 @@ function companyCheck(entry, picks) {
     !picks.industries.some((key) => MAKERS.has(key)))};
 }
 
-// 특정 공고: every chosen item must match; choices within one item add up.
+// 특정 분야 공고: every chosen item must match; choices within one item add up.
 function noticeMatches(entry, picks) {
   const industries = entry.industries ?? [];
   if (picks.industries.length && !picks.industries.some((key) =>

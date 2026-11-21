@@ -55,6 +55,12 @@ h1 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); font-weight: 900; line-h
   padding: 1rem 1.25rem 1.1rem; cursor: pointer; border-top: 4px solid transparent; margin-top: -4px;
 }
 .tabs button + button { border-left: 1px solid var(--line); }
+.tabs button { display: flex; flex-direction: column; justify-content: flex-start; word-break: keep-all; }
+@media (max-width: 640px) {
+  .tabs button { padding: .8rem .85rem .9rem; }
+  .tabs button strong { font-size: 1.12rem; }
+  .tabs button span { font-size: .82rem; }
+}
 .tabs button strong { display: block; font-family: "Noto Serif KR", serif; font-size: 1.4rem; font-weight: 700; letter-spacing: -.03em; color: var(--ink); }
 .tabs button span { display: block; margin-top: .15rem; font-size: .9rem; }
 .tabs button:hover strong { color: var(--navy); }
