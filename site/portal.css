@@ -37,7 +37,9 @@ a:hover { color: var(--navy); }
 .brand-kmi-center text { font-size: 26px; font-weight: 600; }
 
 /* Page heading */
-.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .5rem 2rem; padding: 2.5rem 0 1.5rem; }
+.portal-title { padding-top: 2.5rem; }
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .5rem 2rem; padding: 1.5rem 0 1.25rem; }
+.page-head h2 { margin: 0; font-size: clamp(1.4rem, 2.4vw, 1.85rem); font-weight: 700; line-height: 1.2; }
 h1, h2 { font-family: "Noto Serif KR", "AppleMyungjo", serif; letter-spacing: -.03em; }
 h1 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); font-weight: 900; line-height: 1.15; }
 .page-meta { margin: 0; font-size: .875rem; color: var(--muted); }
