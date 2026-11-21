@@ -31,11 +31,11 @@ a:hover { color: var(--navy); }
 .main-nav { display: flex; flex-wrap: wrap; gap: .25rem 1.75rem; font-weight: 600; }
 .main-nav a { text-decoration: none; padding-bottom: .25rem; border-bottom: 3px solid transparent; }
 .main-nav a[aria-current="page"] { color: var(--navy); border-bottom-color: var(--navy); }
-.brand-kmi { position: relative; display: block; width: 210px; color: #231916; }
+/* The KMI logo is used as issued; the center name stands beside it. */
+.brand-kmi { display: flex; align-items: center; gap: .85rem; color: #231916; text-decoration: none; }
+.brand-kmi img { display: block; width: 210px; height: auto; }
+.brand-center { padding-left: .85rem; border-left: 1px solid #9aa2ab; font-size: 1.05rem; font-weight: 600; line-height: 2; letter-spacing: -.01em; white-space: nowrap; }
 .main-nav { margin-left: auto; }
-.brand-kmi img { display: block; width: 100%; height: auto; clip-path: polygon(0 0, 100% 0, 100% 60%, 27% 60%, 27% 100%, 0 100%); }
-.brand-kmi-center { position: absolute; left: calc(100% * 123 / 409); top: 60%; width: calc(100% * 286 / 409); fill: currentColor; overflow: visible; }
-.brand-kmi-center text { font-size: 26px; font-weight: 600; }
 
 /* Page heading */
 .portal-title { padding-top: 2.5rem; }
@@ -159,7 +159,9 @@ h1 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); font-weight: 900; line-h
 
 @media (max-width: 52rem) {
   .wrap { width: calc(100% - 2rem); }
-  .brand-kmi { width: 170px; }
+  .brand-kmi img { width: 160px; }
+  .brand-kmi { gap: .6rem; }
+  .brand-center { padding-left: .6rem; font-size: .92rem; }
   .main-nav { margin-left: 0; }
   .finder-list > li { grid-template-columns: 5rem minmax(0, 1fr); gap: .6rem; }
   .search { margin-left: 0; width: 100%; }
