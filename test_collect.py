@@ -6,7 +6,7 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, planning_fields,
+    drop_hub_duplicates, komeri, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
@@ -26,6 +26,9 @@ class TargetRulesTest(unittest.TestCase):
             ("AI융합 의료기기 성능 평가 지원", False, "다른 업종 한정"),
             ("해외 저작권 바우처 사업 수행기관 모집", False, "기업지원 아님"),
             ("서천 해양 블루바이오 예비창업자 지원", True, "해양 특화"),
+            ("(부산센터) 2026년 제10회 제대군인 창업 워크숍 개최 안내", False, "개인 대상"),
+            ("[울산] 2026년 미래내일 일경험 인턴형 참여기업 모집 공고", True, "업종 무관"),
+            ("[충북] 2026년 2차 미취업청년 취업연계 일경험 지원사업 참여기업 모집", True, "업종 무관"),
         ]
         for title, keep, label in cases:
             with self.subTest(title=title):
@@ -89,6 +92,16 @@ class OfficialApiTest(unittest.TestCase):
         self.assertEqual(rnd["category"], "rnd")
         self.assertEqual(rnd["planning_stage"], "application")
         self.assertEqual(rnd["publisher"], "한국산업기술기획평가원")
+        self.assertNotIn("period_note", support)
+
+    def test_bizinfo_api_keeps_undated_period_wording(self):
+        items = [{"pblancId": "PBLN_9", "pblancNm": "2026년 수출 바우처 지원", "reqstBeginEndDe": "예산 소진시까지"},
+                 {"pblancId": "PBLN_8", "pblancNm": "2026년 판로 지원", "reqstBeginEndDe": "상시 접수"},
+                 {"pblancId": "PBLN_7", "pblancNm": "2026년 홍보 지원", "reqstBeginEndDe": ""}]
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            rows = bizinfo_api(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
+        self.assertEqual([row.get("period_note") for row in rows], ["예산 소진 시까지", "상시 접수", None])
+        self.assertEqual(period_note("2026-11-16 ~ 2026-12-11"), "")
 
     def test_bizinfo_events_drop_finished_events(self):
         items = [

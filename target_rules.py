@@ -20,6 +20,7 @@ NOT_SUPPORT = re.compile(
     r"합격자|취소\s*공고|운영\s*제안\s*모집|구직자"
 )
 INDIVIDUAL_FISHERS = re.compile(r"직불|직접\s*지불|어촌\s*정착|어업인|어업\s*활동|건강\s*검진|영어\s*정착|농어촌\s*민박|귀어|생계")
+INDIVIDUALS = re.compile(r"제대\s*군인|장병|구직자|미취업자|대학생|청소년|어르신")
 SMALL_MERCHANTS = re.compile(r"소상공인|자영업|가맹점|골목\s*상권|전통\s*시장|상점가|카드\s*수수료|지역\s*화폐|동백전|폐업")
 OTHER_INDUSTRY = re.compile(
     r"의료기기|의료|헬스\s*케어|병원|제약|신약|화장품|뷰티|(?<!블루)(?<!해양)바이오|농업|농촌|농산|농식품|농기계|"
@@ -37,6 +38,8 @@ def judge(title, organizer="", target=""):
         return False, "기업지원 아님"
     if INDIVIDUAL_FISHERS.search(title):
         return False, "어업인 개인 지원"
+    if INDIVIDUALS.search(title) and "기업" not in title:
+        return False, "개인 대상"
     if SMALL_MERCHANTS.search(title) or (SMALL_MERCHANTS.search(target or "") and not re.search(r"중소|창업|벤처|기업", target or "")):
         return False, "소상공인 대상"
     if MARITIME.search(f"{title} {organizer or ''}"):

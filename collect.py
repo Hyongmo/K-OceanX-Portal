@@ -584,6 +584,14 @@ def kst_today():
     return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
 
 
+def period_note(text):
+    """Return the stated application period when it names no date, such as "예산 소진 시까지"."""
+    text = clean(text)
+    if not text or DATE_TIME.search(text) or re.search(r"\d{8}", text):
+        return ""
+    return shorten(re.sub(r"(소진|완료|마감)시", r"\1 시", text), 30)
+
+
 def date_range(text):
     """Return (first date, last date, last time) from an official period string."""
     found = []
@@ -723,6 +731,7 @@ def bizinfo_api(get, key):
                            params("https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do", pblancId=number),
                            "rnd" if is_rnd else "support", published=iso(str(item.get("creatPnttm") or "")[:10]),
                            opens=opens, deadline=deadline, deadline_time=clock, publisher=organizer,
+                           period_note="" if deadline else period_note(item.get("reqstBeginEndDe")),
                            topic=shorten(item.get("bsnsSumryCn"), 140), eligibility=shorten(item.get("trgetNm"), 80),
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",

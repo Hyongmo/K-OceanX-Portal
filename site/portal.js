@@ -177,7 +177,7 @@ function appendNotice(list, entry, region, age) {
     addText(due, "span", shortDate(entry.deadline) + (entry.deadline_time ? " " + entry.deadline_time : ""));
     if (entry.opens && entry.opens > today) addText(due, "span", `${shortDate(entry.opens)} 접수 시작`);
   } else {
-    addText(due, "strong", "상시");
+    addText(due, "strong", entry.period_note || "공고문 확인");
     if (entry.published) addText(due, "span", `${shortDate(entry.published)} 게시`);
   }
 
