@@ -22,7 +22,12 @@ a:hover { color: var(--navy); }
 /* Header */
 .site-header { border-bottom: 1px solid var(--line); }
 .header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 2.25rem; padding: 1rem 0; }
-.brand-oceanx img { display: block; height: 42px; width: auto; }
+.brand-oceanx { display: inline-flex; align-items: center; gap: .6rem; text-decoration: none; }
+/* Show only the symbol, the left 420 of the 900-pixel official lockup. */
+.brand-symbol { display: block; height: 42px; aspect-ratio: 420 / 241; overflow: hidden; }
+.brand-symbol img { display: block; height: 100%; width: auto; max-width: none; }
+.brand-name { font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em; color: var(--navy); }
+.brand-accent { color: #118cc8; }
 .main-nav { display: flex; flex-wrap: wrap; gap: .25rem 1.75rem; font-weight: 600; }
 .main-nav a { text-decoration: none; padding-bottom: .25rem; border-bottom: 3px solid transparent; }
 .main-nav a[aria-current="page"] { color: var(--navy); border-bottom-color: var(--navy); }
