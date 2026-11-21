@@ -144,8 +144,15 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(agency_name("서울기후테크산업지원센터장"), "서울기후테크산업지원센터")
         registry = agency_registry([{"agency": "부산테크노파크", "agency_region": "부산"}],
                                    {"울산테크노파크": {"region": "울산", "last_seen": "2026-11-01"}}, "2026-11-21")
-        self.assertEqual(registry, {"부산테크노파크": {"region": "부산", "last_seen": "2026-11-21"},
-                                    "울산테크노파크": {"region": "울산", "last_seen": "2026-11-01"}})
+        self.assertEqual(registry["부산테크노파크"], {"region": "부산", "last_seen": "2026-11-21"})
+        self.assertEqual(registry["울산테크노파크"], {"region": "울산", "last_seen": "2026-11-01"})
+        # Main agencies are listed before any notice of theirs is collected.
+        self.assertEqual(registry["부산창조경제혁신센터"], {"region": "부산", "last_seen": ""})
+        self.assertEqual(registry["포항테크노파크"]["region"], "경북")
+        self.assertEqual(agency_region("부산산업과학혁신원"), "부산")
+        registry = agency_registry([], {"BISTEP": {"region": "", "last_seen": "2026-11-21"}}, "2026-11-22")
+        self.assertNotIn("BISTEP", registry)
+        self.assertEqual(registry["부산산업과학혁신원"], {"region": "부산", "last_seen": "2026-11-21"})
 
     def test_food_and_lodging_programs_are_left_out(self):
         self.assertEqual(judge("함안 맛집ㆍ멋집 지정 신청 공고"), (False, "음식점·숙박 대상"))

@@ -726,6 +726,29 @@ def region_hint(title, target="", tags=(), content=""):
 
 
 PUBLISHED_DATA = "https://hyongmo.github.io/K-OceanX-Portal/data.json"
+# Agencies whose own boards are collected directly carry no publisher field; their names.
+SOURCE_AGENCIES = {
+    "bistep_planning": "부산산업과학혁신원", "kimst_rnd": "해양수산과학기술진흥원", "kimst_notice": "해양수산과학기술진흥원",
+    "nipa": "정보통신산업진흥원", "nia_planning": "한국지능정보사회진흥원", "keit_planning": "한국산업기술기획평가원",
+    "jcia": "전남정보문화산업진흥원", "iris": "IRIS(범부처통합연구지원시스템)",
+}
+AGENCY_RENAMES = {"BISTEP": "부산산업과학혁신원", "KIMST 사업공고": "해양수산과학기술진흥원",
+                  "KIMST 공지사항": "해양수산과학기술진흥원", "NIPA": "정보통신산업진흥원",
+                  "NIA·AI허브": "한국지능정보사회진흥원", "KEIT 과제기획": "한국산업기술기획평가원",
+                  "IRIS": "IRIS(범부처통합연구지원시스템)"}
+# Main support agencies listed in the guide from the start, so they show even before any of their
+# notices is collected. Name → location ("" = nationwide body).
+SEED_AGENCIES = {
+    **{f"{region}창조경제혁신센터": region for region in (
+        "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원",
+        "충북", "충남", "전북", "전남", "경북", "경남", "제주")},
+    **{f"{region}테크노파크": region for region in (
+        "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원",
+        "충북", "충남", "전북", "전남", "경북", "경남", "제주")},
+    "경기대진테크노파크": "경기", "포항테크노파크": "경북",
+    "부산산업과학혁신원": "부산",
+    "해양수산과학기술진흥원": "", "한국조선해양기자재연구원": "", "한국해양진흥공사": "",
+}
 
 
 def agency_name(name):
@@ -739,7 +762,14 @@ def agency_name(name):
 def agency_registry(records, previous, today):
     """Agencies seen in this or any earlier collection, so an agency with no notice today stays listed.
     `previous` is the agency list of the data published last time."""
-    registry = {name: dict(info) for name, info in (previous or {}).items() if name}
+    registry = {}
+    for name, info in (previous or {}).items():
+        # Names first stored from a source label ("BISTEP", "KIMST 사업공고") move to the agency's name.
+        name = AGENCY_RENAMES.get(name, name)
+        if name and (name not in registry or info.get("last_seen", "") > registry[name].get("last_seen", "")):
+            registry[name] = dict(info)
+    for name, region in SEED_AGENCIES.items():
+        registry.setdefault(name, {"region": region, "last_seen": ""})
     seen = {}
     for entry in records:
         if entry.get("agency"):
@@ -747,6 +777,8 @@ def agency_registry(records, previous, today):
     for name, regions in seen.items():
         # An agency collected again takes the location read this time, so a correction sticks.
         registry[name] = {"region": sorted(regions - {""})[0] if regions - {""} else "", "last_seen": today}
+    for name, region in SEED_AGENCIES.items():
+        registry[name]["region"] = region  # the reviewed location of a listed agency stands
     return dict(sorted(registry.items()))
 
 
@@ -1363,7 +1395,8 @@ def build(samples):
         classify_information(entry)
         classify_support(entry)
         if entry["category"] in ("support", "rnd"):
-            entry["agency"] = agency_name(entry.get("publisher") or sources.get(entry["source"], ("",))[0])
+            entry["agency"] = agency_name(entry.get("publisher") or SOURCE_AGENCIES.get(entry["source"]) or
+                                          sources.get(entry["source"], ("",))[0])
             if "agency_region" not in entry:
                 region = agency_region(entry.get("publisher", ""))
                 if region:
