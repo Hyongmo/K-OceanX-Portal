@@ -91,6 +91,7 @@ const INDUSTRY_LIST = [
   ["fish_catch", "수산물 생산(어업·양식)"], ["fish_process", "수산물 가공"], ["fish_trade", "수산물 유통"],
   ["leisure", "해양수산 레저·관광"], ["equipment", "해양수산 기자재 제조"], ["service", "해양수산 관련 서비스"],
 ];
+const ALL_MARITIME = "maritime_all";
 const FISHERIES = ["fish_catch", "fish_process", "fish_trade"];
 // Ocean and fisheries technology: the 13 top-level classes of the KIMST classification (2024).
 const MARINE_TECH_LIST = [
@@ -107,7 +108,7 @@ const INNOVATION_LIST = [
   ["healthcare", "헬스케어"], ["content", "콘텐츠"], ["defense_space", "방산·우주항공·해양"],
   ["green", "친환경"], ["energy", "에너지·원자력·핵융합"], ["advanced_manufacturing", "첨단제조"],
 ];
-const LABELS = Object.fromEntries([...INDUSTRY_LIST, ...MARINE_TECH_LIST, ...INNOVATION_LIST]);
+const LABELS = Object.fromEntries([...INDUSTRY_LIST, ...MARINE_TECH_LIST, ...INNOVATION_LIST, [ALL_MARITIME, "해양수산 전체"]]);
 // Manufacturing programs fit these industries; for the others they need a check.
 const MAKERS = new Set(["resource", "ship", "fish_process", "equipment"]);
 const BENEFITS = [
@@ -118,16 +119,19 @@ const BENEFITS = [
 ];
 const BENEFIT_LABELS = Object.fromEntries(BENEFITS.map(([key, label]) => [key, label]));
 const FINDER_PAGE = 30;
-// A new key so that earlier saved defaults (such as Busan) do not carry over.
-const STORE = "koceanx-finder-2";
-let finder = {industries: [], techs: [], regions: [], age: "", benefits: []};
+// Two tabs. "우리 회사" leaves out what the company cannot apply to;
+// "특정 공고" keeps only the notices that match every chosen condition.
+const STORE = "koceanx-finder-4";
+const TABS = ["company", "notice"];
+const blank = () => ({industries: [], techs: [], regions: [], ages: [], benefits: []});
+let finder = {tab: "company", company: blank(), notice: blank()};
 try {
   const saved = JSON.parse(localStorage.getItem(STORE) || "{}");
-  if (Array.isArray(saved.industries)) {
-    for (const key of Object.keys(finder)) if (key in saved) finder[key] = saved[key];
-    if (!Array.isArray(saved.regions)) finder.regions = saved.region ? [saved.region] : [];
-    if (!AGE_LABELS[finder.age]) finder.age = "";
-    if (!Array.isArray(finder.benefits)) finder.benefits = [];
+  if (TABS.includes(saved.tab)) finder.tab = saved.tab;
+  for (const tab of TABS) {
+    for (const key of Object.keys(blank())) {
+      if (Array.isArray(saved[tab]?.[key])) finder[tab][key] = saved[tab][key];
+    }
   }
 } catch { /* storage may be blocked */ }
 
@@ -143,6 +147,12 @@ function benefitsOf(entry) {
 }
 
 const techsOf = (entry) => [...(entry.marine_tech ?? []), ...(entry.innovation ?? [])];
+const isMaritimeNotice = (entry) => Boolean((entry.industries ?? []).length || entry.maritime_common ||
+  MARITIME_SOURCES.has(entry.source));
+// R&D tasks are fixed on their technology; other notices only when the target line names technology companies.
+const techLimits = (entry) => entry.category === "rnd" ? techsOf(entry) : (entry.tech_only ?? []);
+const techOk = (entry, picks) => !picks.techs.length || techsOf(entry).some((key) => picks.techs.includes(key));
+const benefitOk = (entry, picks) => !picks.benefits.length || benefitsOf(entry).some((key) => picks.benefits.includes(key));
 
 function industryNames(keys) {
   const names = FISHERIES.every((key) => keys.includes(key)) ?
@@ -150,42 +160,77 @@ function industryNames(keys) {
   return names.join("·");
 }
 
-// Where a notice stands for the chosen company: one of the groups, or left out.
-function placeFor(entry) {
+// 우리 회사: what the company cannot apply to is left out, with the reason counted.
+function companyCheck(entry, picks) {
   const regions = regionsOf(entry);
   const ages = agesOf(entry);
-  if (finder.regions.length && regions.length && !regions.includes("전국") &&
-    !regions.some((region) => finder.regions.includes(region))) return {out: "region"};
-  if (finder.age && ages.length && !ages.includes(finder.age)) return {out: "age"};
+  const age = picks.ages[0];
+  if (picks.regions.length && regions.length && !regions.includes("전국") &&
+    !regions.some((region) => picks.regions.includes(region))) return {out: "region"};
+  if (age && ages.length && !ages.includes(age)) return {out: "age"};
+  const limits = techLimits(entry);
+  if (picks.techs.length && limits.length && !limits.some((key) => picks.techs.includes(key))) return {out: "tech"};
   const industries = entry.industries ?? [];
-  if (industries.length) {
-    if (!finder.industries.length) return {group: "industry", keys: industries};
-    const keys = industries.filter((key) => finder.industries.includes(key));
-    return keys.length ? {group: "industry", keys} : {out: "industry"};
+  if (picks.industries.length && industries.length && !industries.some((key) => picks.industries.includes(key))) {
+    return {out: "industry"};
   }
-  const techs = techsOf(entry).filter((key) => finder.techs.includes(key));
-  if (techs.length) return {group: "tech", keys: techs};
-  if (entry.maritime_common || MARITIME_SOURCES.has(entry.source)) return {group: "common"};
-  // R&D aimed at another field is left out only once the company has named its industries.
-  if (entry.category === "rnd" && !entry.open_rnd && finder.industries.length) return {out: "rnd"};
-  if (entry.manufacturing && finder.industries.length && !finder.industries.some((key) => MAKERS.has(key))) return {group: "check"};
-  return {group: "open"};
+  // R&D fixed on a field outside ocean and fisheries does not fit a company that named its industry,
+  // unless it concerns a technology the company chose.
+  if (picks.industries.length && entry.category === "rnd" && !entry.open_rnd && !isMaritimeNotice(entry) &&
+    !techsOf(entry).some((key) => picks.techs.includes(key))) return {out: "rnd"};
+  return {check: Boolean(entry.manufacturing && picks.industries.length &&
+    !picks.industries.some((key) => MAKERS.has(key)))};
 }
 
-function reasonTags(entry, place) {
-  const tags = [];
-  const regions = regionsOf(entry);
-  if (place.group === "industry") tags.push(["mine", `${industryNames(place.keys)} 기업 대상`]);
-  else if (place.group === "tech") tags.push(["tech", `${place.keys.map((key) => LABELS[key]).join("·")} 기술`]);
-  else if (place.group === "common") tags.push(["common", "해양수산 기업 대상"]);
-  else if (place.group === "check") tags.push(["", "제조기업 대상일 수 있음"]);
-  else tags.push(["ok", "분야 제한 없음"]);
-  if (finder.regions.length) {
-    const mine = regions.filter((region) => finder.regions.includes(region));
-    tags.push(mine.length ? ["ok", `${mine.join("·")} 기업 대상`] :
-      regions.includes("전국") ? ["ok", "전국 대상"] : ["", "지역은 공고문 확인"]);
+// 특정 공고: every chosen item must match; choices within one item add up.
+function noticeMatches(entry, picks) {
+  const industries = entry.industries ?? [];
+  if (picks.industries.length && !picks.industries.some((key) =>
+    key === ALL_MARITIME ? isMaritimeNotice(entry) : industries.includes(key))) return false;
+  if (!techOk(entry, picks)) return false;
+  if (picks.regions.length && !regionsOf(entry).some((region) => picks.regions.includes(region))) return false;
+  if (picks.ages.length && !agesOf(entry).some((age) => picks.ages.includes(age))) return false;
+  return benefitOk(entry, picks);
+}
+
+function industryTag(entry) {
+  const industries = entry.industries ?? [];
+  if (industries.length) return ["mine", `${industryNames(industries)} 기업 대상`];
+  if (entry.maritime_common || MARITIME_SOURCES.has(entry.source)) return ["common", "해양수산 기업 전체"];
+  return ["", "업종 제한 없음"];
+}
+
+function companyTags(entry, picks, fit) {
+  const tags = [industryTag(entry)];
+  if (picks.industries.length && tags[0][0] !== "mine") tags[0][0] = tags[0][0] || "ok";
+  if (picks.techs.length) {
+    const mine = techLimits(entry).filter((key) => picks.techs.includes(key));
+    tags.push(mine.length ? ["mine", `${mine.map((key) => LABELS[key]).join("·")} 기술 대상`] : ["ok", "기술 제한 없음"]);
   }
-  if (finder.age) tags.push(agesOf(entry).includes(finder.age) ? ["ok", `업력 ${AGE_LABELS[finder.age]} 대상`] : ["ok", "업력 제한 없음"]);
+  if (fit?.check) tags.push(["", "제조기업 한정 가능성"]);
+  const regions = regionsOf(entry);
+  if (picks.regions.length) {
+    const mine = regions.filter((region) => picks.regions.includes(region));
+    tags.push(mine.length ? ["ok", `${mine.join("·")} 기업 대상`] :
+      regions.includes("전국") ? ["ok", "전국 대상"] : ["", "지역: 공고문 확인"]);
+  } else if (regions.length) {
+    tags.push(["", regions.join("·")]);
+  }
+  const age = picks.ages[0];
+  if (age) tags.push(agesOf(entry).includes(age) ? ["ok", `업력 ${AGE_LABELS[age]} 대상`] : ["ok", "업력 제한 없음"]);
+  return tags;
+}
+
+function noticeTags(entry, picks) {
+  const tags = [industryTag(entry)];
+  const techs = techsOf(entry).filter((key) => !picks.techs.length || picks.techs.includes(key));
+  if (techs.length) tags.push(["tech", `${techs.map((key) => LABELS[key]).join("·")} 관련`]);
+  const regions = regionsOf(entry);
+  if (regions.length) tags.push([picks.regions.length ? "mine" : "", regions.join("·")]);
+  const ages = agesOf(entry);
+  if (ages.length && ages.length < AGE_LIST.length) {
+    tags.push([picks.ages.length ? "mine" : "", `업력 ${ages.map((age) => AGE_LABELS[age]).join("·")}`]);
+  }
   return tags;
 }
 
@@ -223,127 +268,125 @@ function pressChips(container, chosen) {
   for (const chip of container.children) chip.setAttribute("aria-pressed", String(chosen.includes(chip.dataset.key)));
 }
 
-function renderSupport() {
-  renderMine();
-}
-
-function renderMine() {
-  pressChips(el("industries"), finder.industries);
-  pressChips(el("marine-tech"), finder.techs);
-  pressChips(el("innovation"), finder.techs);
-  pressChips(el("regions"), finder.regions);
-  pressChips(el("ages"), [finder.age]);
-  pressChips(el("benefits"), finder.benefits);
-  const terms = searchTerms(el("query").value.trim());
-  const placed = [];
-  const out = {region: 0, age: 0, industry: 0, rnd: 0};
-  const closed = [];
-  for (const entry of supportScope()) {
-    if (!matches(entry, terms)) continue;
-    const place = placeFor(entry);
-    if (isClosed(entry)) {
-      if (!place.out) closed.push([entry, place]);
-      continue;
-    }
-    if (place.out) out[place.out] += 1;
-    else placed.push([entry, place]);
-  }
-  // Each support chip shows how many notices the company could apply to of that kind.
-  const counts = Object.fromEntries(BENEFITS.map(([key]) => [key, 0]));
-  placed.forEach(([entry]) => benefitsOf(entry).forEach((key) => { counts[key] += 1; }));
-  for (const chip of el("benefits").children) chip.querySelector("small").textContent = counts[chip.dataset.key];
-  const wanted = ([entry]) => !finder.benefits.length || benefitsOf(entry).some((key) => finder.benefits.includes(key));
-  const groups = {industry: [], tech: [], common: [], open: [], check: []};
-  placed.filter(wanted).forEach((item) => groups[item[1].group].push(item));
-
-  const total = Object.values(groups).reduce((sum, list) => sum + list.length, 0);
-  const who = [finder.regions.length && `${finder.regions.join("·")} 소재`, finder.industries.length && industryNames(finder.industries),
-    finder.age && `업력 ${AGE_LABELS[finder.age]}`].filter(Boolean).join(" · ") || "모든";
+function summaryLine(tab, picks, count) {
   const summary = el("finder-summary");
   summary.replaceChildren();
-  addText(summary, "strong", who);
-  summary.append(" 기업이 지금 신청할 수 있는 ");
-  if (finder.benefits.length) addText(summary, "strong", finder.benefits.map((key) => BENEFIT_LABELS[key]).join("·"));
-  summary.append(finder.benefits.length ? " 공고 " : "공고 ");
-  addText(summary, "span", `${total.toLocaleString("ko-KR")}건`, "count");
-  if (!finder.industries.length) summary.append(" · 종사업종을 고르면 더 좁혀집니다");
-  const parts = [out.industry && `다른 업종 대상 ${out.industry}건`, out.rnd && `해양수산 외 분야 R&D ${out.rnd}건`,
-    out.region && `다른 지역 ${out.region}건`, out.age && `업력 불일치 ${out.age}건`].filter(Boolean);
-  el("finder-excluded").textContent = parts.length ? `걸러 낸 공고: ${parts.join(" · ")}` : "";
-
-  el("mine-title").textContent = [`업종 대상 ${groups.industry.length}건`,
-    finder.techs.length ? `선택 기술 ${groups.tech.length}건` : "", `해양수산 공통 ${groups.common.length}건`]
-    .filter(Boolean).join(" · ");
-  el("mine-note").textContent = finder.industries.length ?
-    "우리 업종을 대상으로 한 공고, 선택 기술에 해당하는 공고, 해양수산 기업 전체 대상 공고 순으로 보여 드립니다." :
-    "종사업종을 고르면 우리 업종 공고만 남고 다른 업종 대상 공고는 빠집니다.";
-  const mine = el("mine-list");
-  mine.replaceChildren();
-  for (const [group, title] of [["industry", "우리 업종 대상"], ["tech", "선택 기술 관련"], ["common", "해양수산 기업 공통"]]) {
-    const members = groups[group].sort((a, b) => byDeadline(a[0], b[0]));
-    if (!members.length) continue;
-    addText(mine, "li", `${title} · ${members.length}건`, "group-label");
-    members.forEach(([entry, place]) => noticeRow(mine, entry, reasonTags(entry, place)));
+  const strong = (text) => addText(summary, "strong", text);
+  const techs = picks.techs.map((key) => LABELS[key]).join("·");
+  const kinds = picks.benefits.map((key) => BENEFIT_LABELS[key]).join("·");
+  if (tab === "company") {
+    const company = [picks.regions.length && `${picks.regions.join("·")} 소재`,
+      picks.industries.length && industryNames(picks.industries), techs && `${techs} 기술`,
+      picks.ages[0] && `업력 ${AGE_LABELS[picks.ages[0]]}`].filter(Boolean);
+    if (company.length) {
+      strong(company.join(" · "));
+      summary.append(" 기업 신청 가능 ");
+    } else if (!kinds) {
+      summary.append("현재 접수 가능한 모든 ");
+    }
+    if (kinds) { strong(kinds); summary.append(" "); }
+  } else {
+    const parts = [picks.regions.length && `${picks.regions.join("·")} 지역 대상`,
+      picks.industries.length && picks.industries.map((key) => key === ALL_MARITIME ? "해양수산 분야" : LABELS[key]).join("·"),
+      techs && `${techs} 관련`, picks.ages.length && `업력 ${picks.ages.map((age) => AGE_LABELS[age]).join("·")} 대상`, kinds]
+      .filter(Boolean);
+    if (parts.length) { strong(parts.join(" · ")); summary.append(" "); } else summary.append("현재 접수 가능한 모든 ");
   }
-  if (!mine.children.length) addText(mine, "li", "지금은 우리 회사를 위한 공고가 없습니다.", "empty");
+  summary.append("공고 ");
+  addText(summary, "span", `${count.toLocaleString("ko-KR")}건`, "count");
+}
 
-  const shown = groups.open.sort((a, b) => byDeadline(a[0], b[0]));
-  el("open-title").textContent = `분야 제한 없이 신청할 수 있는 지원사업 · ${shown.length.toLocaleString("ko-KR")}건`;
-  // R&D aimed at our industry or at ocean and fisheries companies sits in section 2.
-  const aboveRnd = [...groups.industry, ...groups.tech, ...groups.common].filter(([entry]) => entry.category === "rnd").length;
-  el("open-note").textContent = finder.benefits.includes("rnd") && aboveRnd ?
-    ` 우리 업종·해양수산 관련 R&D ${aboveRnd}건은 위 2번에 있습니다.` : "";
-  const openList = el("open-list");
-  openList.replaceChildren();
-  shown.slice(0, limit).forEach(([entry, place]) => noticeRow(openList, entry, reasonTags(entry, place)));
-  if (!shown.length) addText(openList, "li", "조건에 맞는 공고가 없습니다. 조건이나 검색어를 바꿔 보세요.", "empty");
+function renderSupport() {
+  const tab = finder.tab;
+  const picks = finder[tab];
+  for (const name of TABS) {
+    el(`tab-${name}`).setAttribute("aria-selected", String(name === tab));
+    el(`panel-${name}`).hidden = name !== tab;
+  }
+  const prefix = tab === "company" ? "c" : "n";
+  pressChips(el(`${prefix}-industries`), picks.industries);
+  pressChips(el(`${prefix}-marine-tech`), picks.techs);
+  pressChips(el(`${prefix}-innovation`), picks.techs);
+  pressChips(el(`${prefix}-regions`), picks.regions);
+  pressChips(el(`${prefix}-ages`), picks.ages);
+  pressChips(el(`${prefix}-benefits`), picks.benefits);
+
+  const terms = searchTerms(el("query").value.trim());
+  const shown = [];
+  const closed = [];
+  const counts = Object.fromEntries(BENEFITS.map(([key]) => [key, 0]));
+  const anyKind = {...picks, benefits: []};
+  for (const entry of supportScope()) {
+    if (!matches(entry, terms)) continue;
+    let fit = {};
+    let keep;
+    let keepAnyKind;
+    if (tab === "company") {
+      fit = companyCheck(entry, picks);
+      keepAnyKind = !fit.out;
+      keep = keepAnyKind && benefitOk(entry, picks);
+    } else {
+      keepAnyKind = noticeMatches(entry, anyKind);
+      keep = noticeMatches(entry, picks);
+    }
+    const row = [entry, tab === "company" ? companyTags(entry, picks, fit) : noticeTags(entry, picks)];
+    if (isClosed(entry)) {
+      if (keep) closed.push(row);
+      continue;
+    }
+    // Support chips count what the other choices leave, so each number says what a press would show.
+    if (keepAnyKind) benefitsOf(entry).forEach((key) => { counts[key] += 1; });
+    if (keep) shown.push(row);
+  }
+  for (const chip of el(`${prefix}-benefits`).children) chip.querySelector("small").textContent = counts[chip.dataset.key];
+
+  summaryLine(tab, picks, shown.length);
+
+  shown.sort((a, b) => byDeadline(a[0], b[0]));
+  const list = el("result-list");
+  list.replaceChildren();
+  shown.slice(0, limit).forEach(([entry, tags]) => noticeRow(list, entry, tags));
+  if (!shown.length) addText(list, "li", "해당 공고 없음 · 선택 항목 또는 검색어 변경 필요", "empty");
   el("more").hidden = shown.length <= limit;
   el("more").textContent = `${(shown.length - limit).toLocaleString("ko-KR")}건 더 보기`;
 
-  const check = groups.check.sort((a, b) => byDeadline(a[0], b[0]));
-  el("check-wrap").hidden = !check.length;
-  el("check-summary").textContent = `자격 확인이 필요한 공고 ${check.length}건 · 제조기업만 신청할 수 있을 수 있음`;
-  const checkList = el("check-list");
-  checkList.replaceChildren();
-  check.forEach(([entry, place]) => noticeRow(checkList, entry, reasonTags(entry, place)));
-
-  // Closed notices that fit the same choices, latest deadline first, for reference.
-  const ended = closed.filter(wanted).sort((a, b) => byDeadline(b[0], a[0]));
-  el("closed-summary").textContent = `조건에 맞는 마감된 공고 ${ended.length}건 보기`;
+  const ended = closed.sort((a, b) => byDeadline(b[0], a[0]));
+  el("closed-summary").textContent = `같은 조건의 마감 공고 ${ended.length}건`;
   const closedList = el("closed-list");
   closedList.replaceChildren();
-  ended.forEach(([entry, place]) => noticeRow(closedList, entry, reasonTags(entry, place)));
+  ended.forEach(([entry, tags]) => noticeRow(closedList, entry, tags));
 }
 
-function chipGroup(container, items, owner, field) {
+function chipGroup(container, items, tab, field, single) {
   for (const [key, label] of items) {
     const chip = addText(container, "button", label);
     chip.type = "button";
     chip.dataset.key = key;
     chip.addEventListener("click", () => {
-      const target = owner();
-      const list = target[field];
-      target[field] = list.includes(key) ? list.filter((value) => value !== key) : [...list, key];
+      const chosen = finder[tab][field];
+      if (chosen.includes(key)) finder[tab][field] = chosen.filter((value) => value !== key);
+      else finder[tab][field] = single ? [key] : [...chosen, key];
       resetSupport();
     });
   }
 }
 
 function setupSupport() {
-  const mine = () => finder;
-  chipGroup(el("industries"), INDUSTRY_LIST, mine, "industries");
-  chipGroup(el("marine-tech"), MARINE_TECH_LIST, mine, "techs");
-  chipGroup(el("innovation"), INNOVATION_LIST, mine, "techs");
-  chipGroup(el("regions"), REGIONS.map((region) => [region, region]), mine, "regions");
-  // A company has one age band; pressing the chosen band again clears it.
-  for (const [key, label] of AGE_LIST) {
-    const chip = addText(el("ages"), "button", label);
-    chip.type = "button";
-    chip.dataset.key = key;
-    chip.addEventListener("click", () => { finder.age = finder.age === key ? "" : key; resetSupport(); });
+  for (const [tab, prefix] of [["company", "c"], ["notice", "n"]]) {
+    const industries = tab === "notice" ? [[ALL_MARITIME, "해양수산 전체"], ...INDUSTRY_LIST] : INDUSTRY_LIST;
+    chipGroup(el(`${prefix}-industries`), industries, tab, "industries");
+    chipGroup(el(`${prefix}-marine-tech`), MARINE_TECH_LIST, tab, "techs");
+    chipGroup(el(`${prefix}-innovation`), INNOVATION_LIST, tab, "techs");
+    chipGroup(el(`${prefix}-regions`), REGIONS.map((region) => [region, region]), tab, "regions");
+    chipGroup(el(`${prefix}-ages`), AGE_LIST, tab, "ages", tab === "company");
+    chipGroup(el(`${prefix}-benefits`), BENEFITS.map(([key, label]) => [key, label]), tab, "benefits");
+    for (const chip of el(`${prefix}-benefits`).children) addText(chip, "small", "", "chip-count");
+    el(`tab-${tab}`).addEventListener("click", () => { finder.tab = tab; resetSupport(); });
   }
-  chipGroup(el("benefits"), BENEFITS.map(([key, label]) => [key, label]), mine, "benefits");
-  for (const chip of el("benefits").children) addText(chip, "small", "", "chip-count");
+  el("finder-reset").addEventListener("click", () => {
+    finder[finder.tab] = blank();
+    resetSupport();
+  });
   el("query").addEventListener("input", () => { limit = FINDER_PAGE; renderSupport(); });
   el("more").addEventListener("click", () => { limit += FINDER_PAGE; renderSupport(); });
 }

@@ -62,7 +62,7 @@ def judge(title, organizer="", target="", stated=""):
 # industry is meant for companies in that industry.
 INDUSTRIES = {
     "resource": r"해상\s*풍력|해양\s*(?:에너지|자원|광물|공간|건설|구조물)|조력|파력|심해|해저|준설",
-    "port": r"해운|(?<!어)선사|선주|항만(?!\s*건설)|부두|컨테이너\s*(?:터미널|선)|해상\s*(?:운송|물류|화물)|항로|"
+    "port": r"해운|(?:해운|외항|국적|컨테이너)\s*선사|선주|항만(?!\s*건설)|화물\s*유치|물동량|부두|컨테이너\s*(?:터미널|선)|해상\s*(?:운송|물류|화물)|항로|"
             r"스마트\s*항만|하역|도선",
     "ship": r"조선(?!일보|대학|대)|선박|해양\s*플랜트|자율\s*운항|쇄빙|함정|선체|친환경\s*선|LNG\s*선",
     "fish_catch": r"(?<!농)어업|(?<!농)어촌|어항|어선|활어|패류|해조류?|수산\s*(?:자원|종자)|종자\s*산업|어장|"
@@ -71,7 +71,7 @@ INDUSTRIES = {
     "fish_trade": r"수산물\s*(?:유통|판로|수출|직거래|판매|물류|브랜드|소비|수출입)|위판|수산\s*물류|저온\s*저장",
     "leisure": r"해양\s*(?:관광|레저|스포츠)|마리나|요트|크루즈|낚시|섬\s*관광|어촌\s*관광",
     "equipment": r"기자재|선용품|해양\s*(?:장비|로봇|센서|기기|드론)|수중\s*(?:로봇|드론|센서|통신|데이터)|어구|선박\s*부품",
-    "service": r"해사|선박\s*금융|해운\s*금융|해양\s*(?:금융|보험|교육|엔지니어링|측량)|해양플랜트\s*서비스",
+    "service": r"(?<![가-힣])해사(?:\s*(?:안전|산업|법|클러스터|기술|서비스|분야))|선박\s*금융|해운\s*금융|해양\s*(?:금융|보험|교육|엔지니어링|측량)|해양플랜트\s*서비스",
 }
 FISHERIES = ("fish_catch", "fish_process", "fish_trade")
 # "수산" on its own names the whole fisheries chain: catch, processing and trade.
@@ -85,7 +85,7 @@ TARGET_INDUSTRIES = {
     "fish_trade": r"수산물\s*(?:유통|수출|수출입|판매)",
     "ship": r"(?:조선|선박)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|협력사|사업자)",
     "equipment": r"기자재[^\s,·ㆍ()]{0,6}(?:기업|업체|업자)",
-    "port": r"(?:해운|항만)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|사업자)|(?<!어)선사",
+    "port": r"(?:해운|항만)[^\s,·ㆍ()]{0,10}(?:기업|업체|업자|사업자)|(?:해운|외항|국적)\s*선사",
 }
 SOURCE_INDUSTRIES = {"komeri": ["ship", "equipment"]}
 
@@ -99,7 +99,7 @@ MARINE_TECH = {
     "m_engineering": r"해양\s*(?:플랜트|장비|통신|로봇)|선박\s*(?:설계|기술|공학)|수중|자율\s*운항|친환경\s*선|조선(?!일보|대학|대)",
     "m_disaster": r"해양\s*(?:재해|방재|사고)|연안\s*(?:재해|침식)|구난|해일|적조",
     "m_coast_port": r"항만|해안|연안|부두|해운\s*물류",
-    "m_safety": r"해양\s*안전|해상\s*(?:교통|안전)|선박\s*(?:안전|운항)|해사|항해",
+    "m_safety": r"해양\s*안전|해상\s*(?:교통|안전)|선박\s*(?:안전|운항)|(?<![가-힣])해사(?:\s*(?:안전|산업|법|기술))|항해",
     "m_polar": r"극지|북극|남극|쇄빙",
     "m_aquaculture": r"양식(?!\s*(?:에|을|으로|참조|다운|첨부))|수산\s*(?:종자|질병)|어류\s*백신",
     "m_stock": r"수산\s*자원|어장|어초",
@@ -146,6 +146,23 @@ def _keys(table, text):
     return [key for key, pattern in table.items() if re.search(pattern, text or "")]
 
 
+# A support notice is limited to a technology only when its target line names companies of
+# that technology ("AI 기업", "로봇기업", "미래모빌리티 분야 기업"). Lines about companies that
+# want to adopt or use a technology, priorities, examples or open lists do not limit anyone.
+TECH_COMPANY = r"[^,.\n·ㆍ:()※\-]{0,12}?(?:기업|스타트업|창업기업|업체|개발사|제조사)"
+TECH_OPEN = re.compile(r"도입|활용|희망|수요|의지|우대|우선|중점|전환|예시|구축이\s*필요|업종\s*일체|제한\s*없")
+TECH_LIMIT = {**INNOVATION, "quantum_security": r"양자|보안|사이버"}
+
+
+def tech_only(target):
+    """Return the one or two technologies a target line limits a notice to, or []."""
+    target = target or ""
+    if TECH_OPEN.search(target):
+        return []
+    keys = [key for key, pattern in TECH_LIMIT.items() if re.search(rf"(?:{pattern}){TECH_COMPANY}", target)]
+    return keys if len(keys) <= 2 else []
+
+
 def sector_profile(title, target="", organizer="", source=""):
     """Return the industries a notice is meant for, the technologies it concerns and how open it is."""
     industries = set(_keys(INDUSTRIES, title)) | set(_keys(TARGET_INDUSTRIES, target))
@@ -166,6 +183,9 @@ def sector_profile(title, target="", organizer="", source=""):
         profile["manufacturing"] = True
     if OPEN_RND.search(title):
         profile["open_rnd"] = True
+    limited = tech_only(target)
+    if limited:
+        profile["tech_only"] = limited
     return profile
 
 

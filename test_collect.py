@@ -11,7 +11,7 @@ from collect import (
     pohang_support, record,
 )
 from support_taxonomy import classify_support
-from target_rules import age_bands, judge, sector_profile
+from target_rules import age_bands, judge, sector_profile, tech_only
 
 
 class TargetRulesTest(unittest.TestCase):
@@ -54,6 +54,19 @@ class TargetRulesTest(unittest.TestCase):
         self.assertEqual(industries("창업기업 패키지 지원", source="komeri"), ["ship", "equipment"])
         self.assertIsNone(industries("수출 경쟁력 강화", "수출실적분(선박, 항공)"))
         self.assertIsNone(industries("K-푸드 콜드풀링", "", "한국농수산식품유통공사"))
+        self.assertIsNone(industries("2026년 기업환경 개선사업 참여기업 모집"))
+        self.assertIsNone(industries("침해사고 예방을 위한 취약점 점검 무료 지원"))
+        self.assertEqual(industries("국적선사 친환경 선박 전환 지원"), ["port", "ship"])
+        self.assertEqual(industries("2026년 제주항 화물유치 지원사업 참여업체 모집"), ["port"])
+
+    def test_tech_only_reads_technology_companies_from_the_target_line(self):
+        self.assertEqual(tech_only("부산 소재 AI솔루션 보유 기업, 스타트업, AI개발사(자), 대학원생 등"), ["ai"])
+        self.assertEqual(tech_only("지역 미래모빌리티 분야 기업 및 전후방 연관기업"), ["mobility"])
+        self.assertEqual(tech_only("AI 활용 및 도입 수요가 있는 상시 근로자 20인 이상 중소기업"), [])
+        self.assertEqual(tech_only("관내 제조업, 지식산업, 정보통신산업 중소기업"), [])
+        self.assertEqual(tech_only("창업 7년 이내 기업 ※ 중점분야: 바이오·헬스, AI·빅데이터"), [])
+        self.assertEqual(sector_profile("입주기업 모집", "서울시에 주소지를 둔 기후테크 기업 및 예비창업자").get("tech_only"),
+                         ["green"])
 
     def test_sector_profile_marks_technology_and_openness(self):
         self.assertEqual(sector_profile("2026년 해양수산 연구장비 렌탈지원사업"),
