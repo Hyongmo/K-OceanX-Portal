@@ -7,7 +7,7 @@ from ddgs.exceptions import DDGSException
 
 from collect import (
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
-    city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
+    agency_name, agency_region, agency_registry, city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
 )
 from support_taxonomy import classify_support
@@ -130,6 +130,19 @@ class TargetRulesTest(unittest.TestCase):
         self.assertIsNone(industries("에너지 관련 기업 및 대학ㆍ연구기관"))
         self.assertIsNone(industries("중소기업, 유통ㆍ무역회사 - 해외 물류비"))
         self.assertEqual(industries("기계ㆍ조선ㆍ자동차 업종 기업"), ["ship"])
+
+    def test_agency_guide_reads_agency_locations(self):
+        self.assertEqual(agency_region("대구창조경제혁신센터"), "대구")
+        self.assertEqual(agency_region("기초자치단체", "부산광역시"), "부산")
+        self.assertEqual(agency_region("여수시"), "전남")
+        self.assertEqual(agency_region("남서울대학교 창업보육센터"), "")
+        self.assertEqual(agency_region("한국산업기술기획평가원", "산업통상부"), "")
+        self.assertEqual(agency_name("(재) 대구창조경제혁신센터 대표이사"), "대구창조경제혁신센터")
+        self.assertEqual(agency_name("서울기후테크산업지원센터장"), "서울기후테크산업지원센터")
+        registry = agency_registry([{"agency": "부산테크노파크", "agency_region": "부산"}],
+                                   {"울산테크노파크": {"region": "울산", "last_seen": "2026-11-01"}}, "2026-11-21")
+        self.assertEqual(registry, {"부산테크노파크": {"region": "부산", "last_seen": "2026-11-21"},
+                                    "울산테크노파크": {"region": "울산", "last_seen": "2026-11-01"}})
 
     def test_food_and_lodging_programs_are_left_out(self):
         self.assertEqual(judge("함안 맛집ㆍ멋집 지정 신청 공고"), (False, "음식점·숙박 대상"))

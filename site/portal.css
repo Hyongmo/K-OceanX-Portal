@@ -148,7 +148,13 @@ h1 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); font-weight: 900; line-h
 .region-tiles .national { grid-column: 2 / span 3; }
 .agency-list { flex: 1 1 26rem; min-width: 0; }
 .agency-list h2 { margin: 0 0 .5rem; font-size: 1.4rem; }
-.agency { display: flex; justify-content: space-between; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.agency { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
+.agency button { font: inherit; font-weight: 600; text-align: left; color: var(--ink); background: none; border: 0; padding: .2rem 0; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: .2em; }
+.agency button:hover, .agency button[aria-pressed="true"] { color: var(--navy); text-decoration-color: var(--navy); }
+.agency.idle button, .agency.idle span { color: var(--muted); font-weight: 400; }
+.agency-detail { margin-top: 2.5rem; padding-top: 1.25rem; border-top: 4px solid var(--ink); }
+.agency-detail h3 { margin: 0 0 .4rem; font-family: "Noto Serif KR", serif; font-size: 1.5rem; letter-spacing: -.03em; }
+.agency-facts { margin: 0 0 1rem; font-size: .9rem; color: var(--muted); }
 .agency span { color: var(--muted); font-size: .875rem; white-space: nowrap; }
 
 /* Digest band and footer */

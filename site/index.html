@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&amp;family=Noto+Serif+KR:wght@700;900&amp;display=swap">
-  <link rel="stylesheet" href="./portal.css?v=32">
+  <link rel="stylesheet" href="./portal.css?v=33">
   <script defer src="./portal.js"></script>
 </head>
 <body>
@@ -125,7 +125,7 @@
     <section id="view-agencies" class="view" aria-labelledby="agencies-title" hidden>
       <div class="page-head">
         <h2 id="agencies-title">지원기관 안내</h2>
-        <p class="page-meta">지금 수집된 공고를 낸 기관 · 지역을 고르면 기관별 공고 수 표시</p>
+        <p class="page-meta">지금 공고를 게시 중인 기관 · 기관 소재지별 · 기관을 누르면 게시 중 공고</p>
       </div>
       <div class="agencies">
         <div class="region-tiles" id="region-tiles" role="group" aria-label="시·도 선택"></div>
@@ -133,6 +133,11 @@
           <h2 id="agency-region"></h2>
           <ol id="agency-rows" class="plain-list"></ol>
         </div>
+      </div>
+      <div class="agency-detail" id="agency-detail" hidden>
+        <h3 id="agency-name"></h3>
+        <p class="agency-facts" id="agency-facts"></p>
+        <ol class="plain-list finder-list" id="agency-notices"></ol>
       </div>
     </section>
   </main>

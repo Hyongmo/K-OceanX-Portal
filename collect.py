@@ -725,6 +725,65 @@ def region_hint(title, target="", tags=(), content=""):
     return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
 
 
+PUBLISHED_DATA = "https://hyongmo.github.io/K-OceanX-Portal/data.json"
+
+
+def agency_name(name):
+    """One name per agency: "(재) 대구창조경제혁신센터 대표이사" and "대구창조경제혁신센터" are the same."""
+    name = re.sub(r"^\s*(?:\((?:재|사|주)\)|재단법인|사단법인)\s*", "", clean(name))
+    name = re.sub(r"\s*센터장서?$", "센터", name)
+    name = re.sub(r"\s*(?:대표이사|이사장|원장|본부장)$", "", name)
+    return re.sub(r"센터센터$", "센터", name).strip()
+
+
+def agency_registry(records, previous, today):
+    """Agencies seen in this or any earlier collection, so an agency with no notice today stays listed.
+    `previous` is the agency list of the data published last time."""
+    registry = {name: dict(info) for name, info in (previous or {}).items() if name}
+    for entry in records:
+        name = entry.get("agency")
+        if not name:
+            continue
+        info = registry.setdefault(name, {})
+        info["region"] = entry.get("agency_region") or info.get("region", "")
+        info["last_seen"] = today
+    return dict(sorted(registry.items()))
+
+
+def published_agencies():
+    """The agency list of the currently published data, or {} when it cannot be read."""
+    try:
+        with urlopen(Request(PUBLISHED_DATA, headers={"User-Agent": "K-OceanX pilot/0.1"}), timeout=20) as response:
+            published = json.loads(response.read(16_000_000))
+    except Exception as error:  # the registry then starts from this collection
+        print(f"Published agency list unavailable: {type(error).__name__}", file=sys.stderr)
+        return {}
+    if published.get("agencies"):
+        return published["agencies"]
+    # Data published before the registry existed: rebuild it from its notices.
+    return {agency_name(row.get("publisher", "")): {"region": agency_region(row.get("publisher", "")),
+                                                    "last_seen": str(published.get("updated_at", ""))[:10]}
+            for row in published.get("records", ())
+            if row.get("category") in ("support", "rnd") and row.get("publisher")}
+
+
+def agency_region(*names):
+    """Where an agency sits, read from its own name or its supervising authority (부산광역시, 여수시,
+    대구창조경제혁신센터). Used only to group the agency guide, never to judge a notice."""
+    for name in names:
+        name = name or ""
+        for long, short in LONG_REGIONS.items():
+            if name.startswith(long):
+                return short
+        city = city_regions(name)
+        if len(city) == 1:
+            return city[0]
+        found = [short for short in SHORT_REGIONS if re.search(f"(?<![가-힣]){short}", name)]
+        if len(found) == 1:
+            return found[0]
+    return ""
+
+
 def kstartup_regions(value):
     names = set()
     for part in re.split(r"[,·ㆍ/\s]+", value or ""):
@@ -791,11 +850,17 @@ def kstartup_api(get, key):
             stages = kstartup_stages(clean(item.get("biz_enyy")))
             if stages:
                 hints["stages"] = stages
-            hints["regions"] = kstartup_regions(clean(item.get("supt_regin")))
+            regions = kstartup_regions(clean(item.get("supt_regin")))
+            # The target text decides first: "지역 제한 없음", or 전국 among the official regions, opens it.
+            if "전국" in regions or re.search(r"지역\s*(?:제한\s*(?:없|무관)|무관)|(?<![가-힣])전국|타\s*지역", target):
+                regions = ["전국"]
+            hints["regions"] = regions
             rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
                                "support", opens=opens, deadline=deadline, deadline_time=clock,
                                publisher=organizer, eligibility=shorten(target),
-                               target_full=target, content_full=clean(item.get("pbanc_ctnt")),
+                               target_full=target,
+                               content_full=f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}".strip(),
+                               agency_region=agency_region(organizer),
                                ages=kstartup_ages(clean(item.get("biz_enyy"))),
                                maritime=label == "해양 특화", support_hints=hints))
         total = int(data.get("totalCount") or 0)
@@ -842,6 +907,7 @@ def bizinfo_api(get, key):
                            topic=shorten(item.get("bsnsSumryCn"), 140),
                            eligibility=shorten(target or item.get("trgetNm"), 120),
                            target_full=target or clean(item.get("trgetNm")), content_full=summary,
+                           agency_region=agency_region(organizer, clean(item.get("jrsdInsttNm"))),
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
                            maritime=label == "해양 특화", support_hints=hints))
@@ -1296,6 +1362,12 @@ def build(samples):
     for entry in records.values():
         classify_information(entry)
         classify_support(entry)
+        if entry["category"] in ("support", "rnd"):
+            entry["agency"] = agency_name(entry.get("publisher") or sources.get(entry["source"], ("",))[0])
+            if "agency_region" not in entry:
+                region = agency_region(entry.get("publisher", ""))
+                if region:
+                    entry["agency_region"] = region
         # Full target and notice text are read for judging and not published.
         target = entry.pop("target_full", "") or entry.get("eligibility", "")
         content = entry.pop("content_full", "")
@@ -1325,6 +1397,8 @@ def build(samples):
                            any(row["source"] == key for row in records.values())},
                "support_facets": {"types": TYPES, "stages": STAGES, "methods": METHODS,
                                   "regions": {name: name for name in REGIONS}},
+               "agencies": agency_registry(records.values(), {} if samples else published_agencies(),
+                                           updated_at.astimezone(timezone(timedelta(hours=9))).date().isoformat()),
                "records": list(records.values())}
     temporary = dist / "data.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

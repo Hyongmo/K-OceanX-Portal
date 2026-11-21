@@ -490,34 +490,72 @@ function trendColumns(container, size) {
 
 /* ---------- 지원기관 안내 ---------- */
 
+let agencyName = "";
+
+// Agencies are grouped by where they sit (from their own name or supervising authority);
+// this guide is about the agencies, not about who may apply to a notice.
+const agencyRegionOf = (entry) => entry.agency_region || "전국";
+const agencyLabel = (entry) => entry.agency || sourceLabel(entry);
+
+// Every agency seen so far stays listed, also when it has no notice today.
+function agencyDirectory(open) {
+  const directory = new Map(Object.entries(data.agencies ?? {}).map(([name, info]) =>
+    [name, {region: info.region || "전국", lastSeen: info.last_seen || "", notices: []}]));
+  for (const entry of open) {
+    const name = agencyLabel(entry);
+    const info = directory.get(name) ?? {region: agencyRegionOf(entry), lastSeen: "", notices: []};
+    info.notices.push(entry);
+    directory.set(name, info);
+  }
+  return directory;
+}
+
 function renderAgencies() {
-  const open = supportScope().filter((entry) => !isClosed(entry));
-  const inRegion = (entry, region) => region === "전국" ?
-    regionsOf(entry).includes("전국") || !regionsOf(entry).length : regionsOf(entry).includes(region);
+  const directory = agencyDirectory(supportScope().filter((entry) => !isClosed(entry)));
   const tiles = el("region-tiles");
   tiles.replaceChildren();
   for (const region of [...TILE_ORDER, "전국"]) {
-    const agencies = new Set(open.filter((entry) => inRegion(entry, region)).map(sourceLabel));
+    const count = [...directory.values()].filter((info) => info.region === region).length;
     const button = addText(tiles, "button", "", region === "전국" ? "national" : "");
     button.type = "button";
     button.append(region === "전국" ? "전국 단위 기관" : region);
-    addText(button, "small", `기관 ${agencies.size}`);
+    addText(button, "small", `기관 ${count}`);
     button.setAttribute("aria-pressed", String(region === agencyRegion));
-    button.addEventListener("click", () => { agencyRegion = region; renderAgencies(); });
+    button.addEventListener("click", () => { agencyRegion = region; agencyName = ""; renderAgencies(); });
   }
-  const counts = new Map();
-  open.filter((entry) => inRegion(entry, agencyRegion)).forEach((entry) => {
-    counts.set(sourceLabel(entry), (counts.get(sourceLabel(entry)) ?? 0) + 1);
-  });
-  el("agency-region").textContent = agencyRegion === "전국" ? "전국 단위 기관" : agencyRegion;
+  const agencies = [...directory].filter(([, info]) => info.region === agencyRegion);
+  el("agency-region").textContent = agencyRegion === "전국" ? "전국 단위 기관" : `${agencyRegion} 소재 기관`;
   const rows = el("agency-rows");
   rows.replaceChildren();
-  [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")).forEach(([name, count]) => {
-    const row = addText(rows, "li", "", "agency");
-    addText(row, "strong", name);
-    addText(row, "span", `공고 ${count}건`);
-  });
-  if (!counts.size) addText(rows, "li", "이 지역에서 지금 수집된 공고가 없습니다.", "empty");
+  agencies.sort((a, b) => b[1].notices.length - a[1].notices.length || a[0].localeCompare(b[0], "ko"))
+    .forEach(([name, info]) => {
+      const row = addText(rows, "li", "", info.notices.length ? "agency" : "agency idle");
+      const button = addText(row, "button", name);
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(name === agencyName));
+      button.addEventListener("click", () => {
+        agencyName = name;
+        renderAgencies();
+        el("agency-detail").scrollIntoView({block: "start"});
+      });
+      addText(row, "span", `게시 중 공고 ${info.notices.length}건`);
+    });
+  if (!agencies.length) addText(rows, "li", "이 지역에서 확인된 기관이 아직 없습니다.", "empty");
+  renderAgencyDetail(directory.get(agencyName));
+}
+
+function renderAgencyDetail(info) {
+  const detail = el("agency-detail");
+  detail.hidden = !info;
+  if (!info) return;
+  el("agency-name").textContent = agencyName;
+  const place = info.region === "전국" ? "전국 단위" : info.region;
+  el("agency-facts").textContent = info.notices.length ?
+    `소재지 ${place} · 게시 중 공고 ${info.notices.length}건 · 제목을 누르면 원문 공고로 이동` :
+    `소재지 ${place} · 지금 게시 중인 공고 없음` + (info.lastSeen ? ` · 마지막 공고 확인 ${info.lastSeen}` : "");
+  const notices = el("agency-notices");
+  notices.replaceChildren();
+  [...info.notices].sort(byDeadline).forEach((entry) => noticeRow(notices, entry, []));
 }
 
 /* ---------- 화면 전환 ---------- */
