@@ -101,7 +101,8 @@ def classify_support(entry):
     if entry["category"] != "support":
         return
     review = {field: (*REVIEWED.get(entry["id"], {}).get(field, ()), *hints.get(field, ()))
-              for field in ("types", "stages", "methods", "regions")}
+              for field in ("types", "stages", "methods")}
+    review["regions"] = tuple(hints.get("regions", ()))
     review["eligibility"] = REVIEWED.get(entry["id"], {}).get("eligibility", "")
     title = entry["title"]
     if re.search(r"용역\s*(입찰|대행)|^(?:\[마감\]\s*)?KIMST 지원 연구\s*,", title):
@@ -123,9 +124,8 @@ def classify_support(entry):
         types = {key for key, pattern in TYPE_TERMS.items() if re.search(pattern, text, re.I)}
     stages = {key for key, pattern in STAGE_TERMS.items() if re.search(pattern, text)}
     methods = {key for key, pattern in METHOD_TERMS.items() if re.search(pattern, text, re.I)}
-    # Regions come from the notice's own text, never from where its publisher sits.
-    prefix = re.match(r"^\[([^\]]+)\]", title)
-    regions = {value for value in (prefix[1] if prefix else "",) if value in REGIONS}
+    # Regions are decided by the judging step (judging.notice_regions) and arrive as a hint.
+    regions = set()
     for track in entry.get("support_tracks", ()):
         types.update(track["types"])
 

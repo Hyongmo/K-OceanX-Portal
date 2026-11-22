@@ -23,7 +23,8 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import (AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, other_trades_only, sector_profile,
+import judging
+from target_rules import (AGE_BANDS, MARITIME, NOT_SUPPORT, SEA, age_bands, bands_under, judge, other_trades_only, sector_profile,
                           training_scope)
 
 ROOT = Path(__file__).resolve().parent
@@ -691,14 +692,15 @@ def stated_regions(text):
     # preferences ("** 우대조건: …, 충청북도 소재 중소기업"), limits no one.
     lines = [line for line in (text or "").splitlines() if not re.match(r"[\W\d]*(?:우대|가점)", line)]
     text = " ".join(part for part in re.split(r"[,.\n()（）]", "\n".join(lines)) if not re.search(r"우대|가점|우선", part))
-    for group in re.findall(rf"((?:{places})(?:\s*[ㆍ·,/]\s*(?:{places}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
+    # A place name inside a word ("남서울대학교") is not a region.
+    for group in re.findall(rf"(?<![가-힣])((?:{places})(?:\s*[ㆍ·,/]\s*(?:{places}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
                             r"(?:소재|관내|거주|에\s*(?:본사|소재|사업장|주소|거주)|사업장|본사|지역\s*(?:소재|기업|중소|중기업|소기업))",
                             text or ""):
         for name in re.findall(places, group):
             found.add(CITY_TO_REGION.get(name) or LONG_REGIONS.get(name, name))
     # Tenants of a place's facility ("대전 팁스타운 입주기업"), and "지역 내" next to a named place
     # ("대전 팁스타운 입주기업 및 지역 내 창업기업"), limit applicants to that place too.
-    tenants = re.findall(rf"({places})[가-힣A-Za-z0-9\s]{{0,15}}?입주\s*(?:기업|사|업체|예정)", text or "")
+    tenants = re.findall(rf"(?<![가-힣])({places})[가-힣A-Za-z0-9\s]{{0,15}}?입주\s*(?:기업|사|업체|예정)", text or "")
     for name in tenants:
         found.add(CITY_TO_REGION.get(name) or LONG_REGIONS.get(name, name))
     return sorted(found)
@@ -735,14 +737,8 @@ def content_regions(title, target="", content=""):
 
 
 def region_hint(title, target="", tags=(), content=""):
-    """Regions for a Bizinfo notice from its own content; nationwide when the content names none.
-    Hashtags (which often follow the publisher's location) count only for a notice without content.
-    The organizer's location never counts."""
-    named = content_regions(title, target, content)
-    if named or (target or "").strip() or (content or "").strip():
-        return named or ["전국"]
-    tagged = {name for tag in tags for name in SHORT_REGIONS if tag in (name, "전남광주") and name in tag}
-    return sorted(tagged) if 0 < len(tagged) <= 2 else ["전국"]
+    """Kept for older callers: the judging step decides regions (judging.notice_regions)."""
+    return judging.notice_regions(title, target, content, (), "", tags)
 
 
 PUBLISHED_DATA = "https://hyongmo.github.io/K-OceanX-Portal/data.json"
@@ -901,13 +897,29 @@ def kstartup_api(get, key):
                 continue
             organizer = clean(item.get("pbanc_ntrp_nm"))
             target = clean(item.get("aply_trgt_ctnt"))
-            keep, label = judge(title, organizer, clean(item.get("aply_trgt")), target)
+            content = f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}".strip()
             official = {"지역": clean(item.get("supt_regin")), "업력": clean(item.get("biz_enyy")),
                         "분류": clean(item.get("supt_biz_clsfc")), "대상": clean(item.get("aply_trgt"))}
+            url = params(KSTARTUP_PAGE, schM="view", pbancSn=number)
+            regions = judging.notice_regions(title, target, content, kstartup_regions(official["지역"]),
+                                             agency_region(organizer), notice_id=f"kstartup:{number}")
+            if judging.notice_kind("kstartup", title, official, content) == "event":
+                # A gathering to attend goes to the event schedule, judged there like every event.
+                start, end = event_when(f"{title}\n{target}\n{content}", date.fromisoformat(opens or today))
+                if not start:
+                    dropped["행사 날짜 없음"] = dropped.get("행사 날짜 없음", 0) + 1
+                    excluded("kstartup", number, title, "행사 날짜 없음", target, content, official)
+                    continue
+                rows.append(record("kstartup", number, title, url, "domestic", event_start=start,
+                                   event_end=end if end != start else "", opens=opens, deadline=deadline,
+                                   deadline_time=clock, publisher=organizer,
+                                   event_region=regions[0] if len(regions) == 1 and regions[0] != "전국" else "",
+                                   content_full=f"{target}\n{content}", review_official=official))
+                continue
+            keep, label = judging.include(title, target, official["대상"])
             if not keep:
                 dropped[label] = dropped.get(label, 0) + 1
-                excluded("kstartup", number, title, label, target,
-                         f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}", official)
+                excluded("kstartup", number, title, label, target, content, official)
                 continue
             hints = {}
             for name in re.split(r"[,]\s*", clean(item.get("supt_biz_clsfc"))):
@@ -916,23 +928,13 @@ def kstartup_api(get, key):
             stages = kstartup_stages(clean(item.get("biz_enyy")))
             if stages:
                 hints["stages"] = stages
-            regions = kstartup_regions(clean(item.get("supt_regin")))
-            # The target text decides first: a region it names ("대전 팁스타운 입주기업 및 지역 내 창업기업")
-            # limits the notice even where the official field says 전국; "지역 제한 없음", or 전국
-            # among the official regions when the target names none, opens it.
-            named = [name for name in content_regions(title, target) if name != "전국"]
-            if named:
-                regions = named
-            elif "전국" in regions or re.search(r"지역\s*(?:제한\s*(?:없|무관)|무관)|(?<![가-힣])전국|타\s*지역", target):
-                regions = ["전국"]
             hints["regions"] = regions
-            rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
+            rows.append(record("kstartup", number, title, url,
                                "support", opens=opens, deadline=deadline, deadline_time=clock,
                                publisher=organizer, eligibility=shorten(target),
-                               target_full=target,
-                               content_full=f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}".strip(),
+                               target_full=target, content_full=content,
                                agency_region=agency_region(organizer),
-                               ages=kstartup_ages(clean(item.get("biz_enyy"))),
+                               ages=judging.notice_ages(title, target, content, official["업력"]),
                                maritime=label == "해양 특화", support_hints=hints, review_official=official))
         total = int(data.get("totalCount") or 0)
         if not items or page_no * 100 >= total:
@@ -955,7 +957,7 @@ def bizinfo_api(get, key):
         if organizer in ("", "기초자치단체", "직접수행", "-"):
             organizer = clean(item.get("jrsdInsttNm"))  # placeholder values name no agency
         target = stated_target(item.get("bsnsSumryCn"))
-        keep, label = judge(title, organizer, clean(item.get("trgetNm")), target)
+        keep, label = judging.include(title, target, clean(item.get("trgetNm")))
         official = {"대상": clean(item.get("trgetNm")), "분야": clean(item.get("pldirSportRealmLclasCodeNm")),
                     "해시태그": clean(item.get("hashtags")), "기간": clean(item.get("reqstBeginEndDe"))}
         if not keep:
@@ -970,7 +972,8 @@ def bizinfo_api(get, key):
         tags = [tag.strip() for tag in re.split(r"[,#]", item.get("hashtags") or "") if tag.strip()]
         is_rnd = bool(planning_type(title) or RND_TITLE.search(title)) and not NOT_RND_TITLE.search(title)
         summary = clean(item.get("bsnsSumryCn"))
-        hints = {"regions": region_hint(title, target, tags, summary)}
+        hints = {"regions": judging.notice_regions(title, target, summary, (), agency_region(organizer), tags,
+                                                   notice_id=f"bizinfo:{number}")}
         field = BIZINFO_FIELDS.get(clean(item.get("pldirSportRealmLclasCodeNm")))
         if field:
             hints["types"] = [field]
@@ -990,28 +993,9 @@ def bizinfo_api(get, key):
     return rows
 
 
-# The event schedule keeps two groups: ocean, fisheries, shipping and port events, and AI and data
-# events. The sea is read from the title and the event text; AI and data from the title only,
-# since event texts mention data and AI in passing ("데이터 기반 마케팅").
-# "해운대" (a Busan district, often in addresses) is not shipping; "TV조선", "헬스조선" and "조선이공대"
-# are not shipbuilding. "선급" is ship classification (한국선급).
-EVENT_MARITIME = re.compile(
-    r"해양|해운(?!대)|항만|선박|선급|해수부|(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공)|(?<!농)(?<!축)(?<!림)수산|"
-    r"(?<!농)어업|(?<!농)어촌|어항|"
-    r"스마트\s*양식|육상\s*양식|양식\s*(?:업|장|어|산업|기업|시설|기술)|해상\s*(?:풍력|물류|운송)|해사|크루즈|원양|"
-    r"북극|남극|극지|maritime|ocean|shipping|aquaculture|seafood|fisher|arctic|polar", re.I)
-EVENT_AI = re.compile(r"(?<![A-Za-z])(?:AI|AX)(?![A-Za-z])|인공지능|데이터|생성형|LLM|머신\s*러닝|딥\s*러닝", re.I)
-# Paid courses, marketing and sales events, and job fairs are not events for companies to follow,
-# whatever their topic (user decision 2026-11-22).
-EVENT_COMMERCIAL = re.compile(
-    r"마케팅|광고|쇼핑몰|스마트\s*스토어|상세\s*페이지|쇼츠|유튜브|인스타|틱톡|커머스|세일즈|"
-    r"강의|클래스|수강|부트\s*캠프|자격증|교육생|국비\s*지원|채용|취업|승무원")
-
-
-def event_in_scope(title, content=""):
-    if EVENT_COMMERCIAL.search(title):
-        return False
-    return bool(EVENT_MARITIME.search(f"{title} {content}") or EVENT_AI.search(title))
+# Event scope, sea words and the paid-course and marketing exclusion live in the judging step.
+EVENT_MARITIME = SEA
+EVENT_AI, EVENT_COMMERCIAL, event_in_scope = judging.EVENT_AI, judging.EVENT_COMMERCIAL, judging.event_in_scope
 
 
 def bizinfo_events(get, key):
@@ -1029,8 +1013,9 @@ def bizinfo_events(get, key):
             dropped["종료"] = dropped.get("종료", 0) + 1
             continue
         organizer = clean(item.get("originEngnNm"))
-        keep, label = judge(title, organizer)
         official = {"지역": clean(item.get("areaNm")), "유형": clean(item.get("eventInfoTyNm"))}
+        kinds = [part.strip() for part in official["유형"].split("@") if part.strip()]
+        keep, label = judging.include(title, training="교육" in kinds)
         if not keep:
             dropped[label] = dropped.get(label, 0) + 1
             excluded("bizinfo_event", number, title, label, "", clean(item.get("nttCn")), official)
@@ -1043,18 +1028,12 @@ def bizinfo_events(get, key):
         opens, deadline, clock = date_range(item.get("rceptPd"))
         area = clean(item.get("areaNm"))
         # One event can carry several types joined by "@", e.g. "교육@수출상담회".
-        kinds = [part.strip() for part in clean(item.get("eventInfoTyNm")).split("@") if part.strip()]
         content = clean(item.get("nttCn"))
         if "교육" in kinds:
             # Training is a support program, listed with the others under 인재·교육 in the finder.
-            keep, reason = training_scope(title)
-            if not keep:
-                dropped[reason] = dropped.get(reason, 0) + 1
-                excluded("bizinfo_event", number, title, reason, "", content, official)
-                continue
-            # Who may apply is read from the notice itself, as for other Bizinfo notices: the area
-            # field is where the course is held ("서울"), not whom it is for.
-            regions = region_hint(title, "", (), content)
+            # Who may apply is read from the notice itself: the area field is where the course is
+            # held ("서울"), not whom it is for.
+            regions = judging.notice_regions(title, "", content, (), notice_id=f"bizinfo_event:{number}")
             rows.append(record("bizinfo_event", number, title, url, "support",
                                opens=opens, deadline=deadline or start, deadline_time=clock,
                                event_start=start, event_end=end, publisher=organizer,
@@ -1113,11 +1092,10 @@ def komeri(get):
 
 
 def drop_hub_duplicates(records):
-    """Keep the K-Startup copy when Bizinfo republishes the same notice."""
-    key = lambda title: re.sub(r"[^가-힣A-Za-z0-9]", "", title)[:40]
-    startup = {key(row["title"]) for row in records.values() if row["source"] == "kstartup"}
-    for record_id in [i for i, row in records.items() if row["source"] == "bizinfo" and key(row["title"]) in startup]:
-        del records[record_id]
+    """Kept for older callers: the judging step merges the same notice across sources."""
+    for key, entry in records.items():
+        entry.setdefault("id", key)
+    judging.drop_duplicates(records)
 
 
 def bisfe(get):
@@ -1251,15 +1229,18 @@ EVENT_WORD = re.compile(r"세미나|포럼|컨퍼런스|콘퍼런스|심포지�
 # Titles that report an event already held, or that are about something else than taking part.
 EVENT_DONE = re.compile(r"결과|성료|성황|마쳐|마무리|폐막|개최했|열었|열렸|가졌|진행했|참석했|사진|영상|발표\s*자료|"
                         r"취소|연기|수상|시상|선정")
-EVENT_LABEL = re.compile(r"(?:일\s*시|일\s*자|일\s*정|기\s*간|개최\s*일(?:자|시)?|행사\s*일(?:자|시)?|교육\s*일(?:자|시)?|날\s*짜)"
+# A label starts its own word: "9일 정책" is a day and a word, not the label "일정".
+EVENT_LABEL = re.compile(r"(?<![0-9가-힣])(?:일\s*시|일\s*자|일\s*정|기\s*간|개최\s*일(?:자|시)?|행사\s*일(?:자|시)?|교육\s*일(?:자|시)?|날\s*짜)"
                          r"\s*[:：\-]?\s*")
+# A date followed by "까지 … 등록/신청" is a deadline for signing up, not the day of the event.
+DEADLINE_AFTER = re.compile(r"\s*(?:\([^)]{0,6}\))?\s*(?:\d{1,2}:\d{2}\s*)?까지[^.\n]{0,15}?(?:등록|신청|접수|모집|마감|제출)")
 EVENT_VERB = re.compile(r"개최|열린다|연다|열리는|열릴|여는|개막|진행(?:된다|한다|하는|되는|될)|마련한다|선보인다")
 # Dates as notices and press reports write them: "2026. 12. 3.", "’26.12.3.", "12월 3일", "12.3.(목)",
 # "12.3.~5.", "오는 3일" and, in a sentence about the event, a bare "22일" (not the "16일 밝혔다" of the report).
 ANY_DAY = re.compile(
     r"(?P<y>20\d{2})\s*[.\-/년]\s*(?P<m>\d{1,2})\s*[.\-/월]\s*(?P<d>\d{1,2})(?!\d)"
     r"|[’'‘](?P<y2>\d{2})\s*\.\s*(?P<m5>\d{1,2})\s*\.\s*(?P<d5>\d{1,2})(?!\d)"
-    r"|(?<![\d.])(?P<m2>\d{1,2})\s*월\s*(?P<d2>\d{1,2})\s*일"
+    r"|(?<![\d.])(?P<m2>\d{1,2})\s*월\s*(?P<d2>\d{1,2})\s*(?:일|(?=\s*[~∼～\-–]\s*\d{1,2}\s*일))"
     r"|(?<![\d.])(?P<m3>\d{1,2})\s*\.\s*(?P<d3>\d{1,2})\s*\.?(?=\s*[(~∼～])"
     r"|오는\s*(?P<d4>\d{1,2})\s*일"
     r"|(?<![\d.월\-~])(?P<d6>\d{1,2})\s*일(?!\s*(?:밝혔|발표|전했|알렸|말했|기준|간|이내|부로))")
@@ -1334,14 +1315,15 @@ def event_when(text, reference):
     text = text or ""
     for label in EVENT_LABEL.finditer(text):
         match = ANY_DAY.match(text, label.end()) or ANY_DAY.search(text[:label.end() + 25], label.end())
-        if match:
+        if match and not DEADLINE_AFTER.match(text, match.end()):
             start, end = _span(text, match, reference)
             if start:
                 return start.isoformat(), end.isoformat() if end else ""
     for sentence in re.split(SENTENCE_END, text):
         if not EVENT_VERB.search(sentence):
             continue
-        match = ANY_DAY.search(sentence)
+        match = next((found for found in ANY_DAY.finditer(sentence)
+                      if not DEADLINE_AFTER.match(sentence, found.end())), None)
         if match:
             start, end = _span(sentence, match, reference)
             if start:
@@ -1737,7 +1719,7 @@ def naver_events(get):
             if not EVENT_WORD.search(title) or EVENT_DONE.search(title):
                 continue
             posted = parsedate_to_datetime(item["pubDate"]).date()
-            if (date.fromisoformat(today) - posted).days > 45 or not event_in_scope(title, summary):
+            if (date.fromisoformat(today) - posted).days > 45 or not event_in_scope(title, summary, title_only=True):
                 continue
             # The Naver copy is preferred: it is always https and keeps one layout.
             link = next((value for value in (item.get("link"), item.get("originallink"))
@@ -1898,17 +1880,10 @@ def eventus_events(get):
 
 
 def drop_event_duplicates(records):
-    """One event listed by several sources is kept once, from the source that states its dates."""
-    rank = {"kmi_event": 0, "bexco": 1, "institution_event": 2, "eventus": 3, "naver_event": 9}
-    kept = set()
-    for key, entry in sorted(((key, entry) for key, entry in records.items()
-                              if entry["category"] in ("domestic", "international") and entry.get("event_start")),
-                             key=lambda pair: rank.get(pair[1]["source"], 5)):
-        name = re.sub(r"\[[^\]]*\]|\W|20\d{2}년?|제\s*\d+\s*회", "", event_name(entry["title"]))[:20]
-        if (name, entry["event_start"]) in kept:
-            del records[key]
-        else:
-            kept.add((name, entry["event_start"]))
+    """Kept for older callers: the judging step merges the same event across sources."""
+    for key, entry in records.items():
+        entry.setdefault("id", key)
+    judging.drop_duplicates(records)
 
 
 def optional(collect):
@@ -2159,30 +2134,27 @@ def build(samples):
     if failed:
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
-    drop_hub_duplicates(records)
-    # Every source, not only the hubs, leaves out notices that are not company support
-    # (operator recruitment, service contracts, judges and the like).
-    # Notices whose target names only trades outside ocean and fisheries (철강, 석유화학, 콘텐츠 …)
-    # are left out too, read from the full target line.
-    for key in [key for key, entry in records.items()
-                if entry["category"] in ("support", "rnd") and (
-                    NOT_SUPPORT.search(entry["title"]) or
-                    other_trades_only(entry.get("target_full") or entry.get("eligibility", "")))]:
-        entry = records.pop(key)
-        excluded(entry["source"], key.split(":", 1)[1], entry["title"],
-                 "기업지원 아님" if NOT_SUPPORT.search(entry["title"]) else "다른 업종 한정(신청 대상)",
-                 entry.get("target_full") or entry.get("eligibility", ""), entry.get("content_full", ""),
-                 entry.get("review_official"))
+    # Sources judged as they were read (K-Startup, Bizinfo) already went through the judging step;
+    # every other source's notices go through the same step here.
+    for key, entry in list(records.items()):
+        if entry["category"] not in ("support", "rnd") or entry["source"] in ("kstartup", "bizinfo", "bizinfo_event"):
+            continue
+        keep, label = judging.include(entry["title"], entry.get("target_full") or entry.get("eligibility", ""))
+        if not keep:
+            records.pop(key)
+            excluded(entry["source"], key.split(":", 1)[1], entry["title"], label,
+                     entry.get("target_full") or entry.get("eligibility", ""), entry.get("content_full", ""),
+                     entry.get("review_official"))
     for entry in records.values():
         classify_information(entry)
     # Events from every source keep to the two groups of the schedule (see event_in_scope).
     for key in [key for key, entry in records.items()
                 if entry["category"] in ("domestic", "international") and
-                not event_in_scope(entry["title"], entry.get("content_full", "") or entry.get("topic", ""))]:
+                not event_in_scope(entry["title"], entry.get("content_full", "") or entry.get("topic", ""),
+                                   title_only=entry["source"] == "naver_event")]:
         entry = records.pop(key)
         excluded(entry["source"], key.split(":", 1)[1], entry["title"], "해양수산·AI·데이터 밖 행사",
                  "", entry.get("content_full", "") or entry.get("topic", ""), entry.get("review_official"))
-    drop_event_duplicates(records)
     kept = []
     for entry in records.values():
         kept.append({"id": entry["id"], "source": entry["source"], "title": entry["title"],
@@ -2202,20 +2174,26 @@ def build(samples):
         # Full target and notice text are read for judging and not published.
         target = entry.pop("target_full", "") or entry.get("eligibility", "")
         content = entry.pop("content_full", "")
+        if entry["category"] in ("domestic", "international"):
+            # The site marks ocean events with the same sea words the judging step uses.
+            if SEA.search(f'{entry["title"]} {content or entry.get("topic", "")}'):
+                entry["maritime"] = True
         if entry["category"] in ("support", "rnd"):
             entry.update(sector_profile(entry["title"], target, content))
-            # Sources other than the hubs carry no region field; their own target text may name one.
-            named = content_regions(entry["title"], target, content)
-            if not named and (target or content).strip():
-                named = ["전국"]
-            if named and not entry.get("support", {}).get("regions"):
-                entry.setdefault("support", {})["regions"] = named
+            if not entry.get("support", {}).get("regions"):
+                named = judging.notice_regions(entry["title"], target, content, (),
+                                               agency_region(entry.get("publisher", "")), notice_id=entry["id"])
+                if named and (target or content).strip():
+                    entry.setdefault("support", {})["regions"] = named
             if "ages" not in entry:
-                # The title is read only when the notice carries no content of its own.
-                text = f"{target} {content}" if (target or content).strip() else entry["title"]
-                bands = age_bands(text)
+                bands = judging.notice_ages(entry["title"], target, content)
                 if bands:
                     entry["ages"] = bands
+    # One listing per notice and per event, across all sources.
+    before = dict(records)
+    for key in judging.drop_duplicates(records):
+        entry = before[key]
+        excluded(entry["source"], key.split(":", 1)[1], entry["title"], "같은 공고(다른 수집처와 중복)")
     merge_exhibitions(records)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)

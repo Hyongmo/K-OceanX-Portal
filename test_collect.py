@@ -236,6 +236,23 @@ class OfficialApiTest(unittest.TestCase):
         self.assertEqual(date_range("20261218"), ("", "2026-12-18", ""))
         self.assertEqual(date_range("예산 소진시까지"), ("", "", ""))
 
+    def test_kstartup_gatherings_go_to_the_event_schedule(self):
+        def item(number, title, text, kind="행사ㆍ네트워크"):
+            return {"pbanc_sn": number, "biz_pbanc_nm": title, "pbanc_rcpt_bgng_dt": "20261110",
+                    "pbanc_rcpt_end_dt": "20261130", "supt_regin": "전국", "supt_biz_clsfc": kind,
+                    "aply_trgt_ctnt": "스타트업 누구나", "pbanc_ctnt": text}
+        items = [item("1", "해양 AI 스타트업 밋업", "■ 일시: 2026. 12. 3.(목) 14:00 ■ 장소: 부산"),
+                 item("2", "VC밋업 : 심사역과 함께하는 테이블토크", "오는 12월 1일 개최"),
+                 item("3", "창원시 벤처투자 매칭&피칭데이 참여기업 모집", "IR 기업 선발")]
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            rows = kstartup_api(lambda name, url: json.dumps({"data": items, "totalCount": 3}).encode(), "key")
+        by_id = {row["id"]: row for row in rows}
+        self.assertEqual((by_id["kstartup:1"]["category"], by_id["kstartup:1"]["event_start"]), ("domestic", "2026-12-03"))
+        self.assertEqual(by_id["kstartup:2"]["category"], "domestic")  # left out later: not ocean or AI
+        self.assertEqual(by_id["kstartup:3"]["category"], "support")   # companies are chosen to pitch
+        self.assertTrue(event_in_scope(by_id["kstartup:1"]["title"]))
+        self.assertFalse(event_in_scope(by_id["kstartup:2"]["title"]))
+
     def test_kstartup_api_keeps_open_eligible_notices_with_official_fields(self):
         items = [
             {"pbanc_sn": "179815", "biz_pbanc_nm": "KDB NextONE 부산 6기 모집", "pbanc_rcpt_bgng_dt": "20261116",

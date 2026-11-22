@@ -8,16 +8,24 @@ individual fishers and notices that are not company support at all.
 
 import re
 
-MARITIME = re.compile(
-    r"해양|수산|(?<!농)어업|(?<!농)어촌|어항|어선|양식장|양식어|양식업|스마트\s*양식|해운|선박|선사|항만|"
-    r"조선(?!일보|대학|대)|기자재(?=.*(?:조선|선박))|해사(?:안전|산업|법|클러스터)|크루즈|블루\s*바이오|"
-    r"해상\s*풍력|원양|해저|수중|극지|쇄빙|북극\s*항로|오션|ocean|marine|maritime",
+# The one dictionary of sea words, used by every judgment (notices, events, industries, the site).
+# Words that only look like sea words are left out where they stand: 해운대 (a Busan district),
+# 개선사업·우선사업 (not 선사), 우수중소기업 (not 수중), 농수산·농축수산·농림수산 (farm programs),
+# TV조선·헬스조선·조선이공대·조선대 and 조선시대 (not shipbuilding).
+SEA = re.compile(
+    r"해양|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업|(?<!농)어촌|어항|어선|양식장|양식어|양식업|양식\s*(?:장|산업|기업|시설|기술)|"
+    r"스마트\s*양식|육상\s*양식|해운(?!대)|선박|(?<!개)(?<!우)선사(?!업)|항만|"
+    r"(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공|시대|왕조|통신사)|중공업|기자재(?=.*(?:조선|선박))|(?<![가-힣])해사(?:\s*(?:안전|산업|법|클러스터|기술))?|"
+    r"크루즈|블루\s*바이오|해상\s*(?:풍력|물류|운송|교통|안전)|원양|해저|(?<!우)수중|극지|북극|남극|쇄빙|선급|해수부|"
+    r"오션|ocean|marine|maritime|shipping|aquaculture|seafood|fisher|arctic|polar",
     re.I,
 )
+MARITIME = SEA
 NOT_SUPPORT = re.compile(
     r"채용|입찰|용역|운영기관\s*(?:모집|선정)|수행기관\s*(?:모집|선정)|위탁기관|평가위원|심사위원|위원\s*모집|"
     r"자문단\s*모집|강사\s*모집|멘토\s*모집|포상|유공|시상식|결과\s*(?:발표|공고|안내)|선정\s*결과|최종\s*선정|"
     r"합격자|취소\s*공고|운영\s*제안\s*모집|구직자|통합연구지원시스템\s*운영|(?<![A-Za-z])TEST(?![A-Za-z])|"
+    r"상가\s*임대|임대\s*공급|수의\s*계약|"
     r"청중\s*평가단|평가단\s*모집|관람객\s*모집"
 )
 INDIVIDUAL_FISHERS = re.compile(r"직불|직접\s*지불|어촌\s*정착|어업인|어업\s*활동|건강\s*검진|영어\s*정착|농어촌\s*민박|귀어|생계")
@@ -26,7 +34,8 @@ FARMERS = re.compile(r"농업인|농업\s*법인|농가|농업\s*경영체|임�
 COMPANIES = re.compile(r"기업|업체|사업자|소공인|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업(?!인)")
 # Farm products and farm-food firms; fisheries words other than inside 농수산·농축수산 keep a notice.
 FARM_TARGET = re.compile(r"농업인|농업\s*(?:회사\s*)?법인|영농|농협|농가|작목반|농식품|농특산물|농림축산|농산물|농축산물")
-FOOD_LODGING = re.compile(r"음식점|맛집|멋집|식품\s*안심|안심\s*(?:식당|업소)|모범\s*음식|제과점|숙박\s*(?:업|시설)|민박|게스트\s*하우스")
+FOOD_LODGING = re.compile(r"음식점|맛집|멋집|식품\s*안심|안심\s*(?:식당|업소)|모범\s*음식|제과점|숙박\s*(?:업|시설)|민박|게스트\s*하우스|"
+                          r"식품\s*진흥\s*기금|식품\s*(?:접객|위생)\s*(?:업|영업)|외식\s*업")
 # "어업인" names individual fishers, who are out of scope, so it does not keep a farm program.
 FISHERY_WORD = re.compile(r"(?<!농)(?<!축)(?<!림)수산|(?<!농)어업(?!인)|어촌|양식|해양")
 # Company words not tied to farm products ("관내 기업체", "기업ㆍ농가", "제조업") keep a notice open.
@@ -41,12 +50,20 @@ OTHER_INDUSTRY = re.compile(
     r"비료|축산|농가|한의약|한방|임산물|임업|산림|목재|원자력|원전|항공|우주|방산|국방|자동차|모빌리티|반도체|디스플레이|"
     r"이차\s*전지|섬유|패션|의류|봉제|신발|가구|주얼리|귀금속|게임|영화|애니메이션|웹툰|음악|공연|예술|관광|숙박|"
     r"외식|음식점|건설|건축|부동산|철도|국가유산|문화재|체육|스포츠|공예|한복|전통주|커피|반려|펫|돌봄|요양|"
-    r"사회적\s*경제|사회\s*연대\s*경제|사회적\s*기업|협동조합|마을기업|광업|스마트팜|GAP|로컬\s*푸드|콘텐츠|출판|서점"
+    r"사회적\s*경제|사회\s*연대\s*경제|사회적\s*기업|협동조합|마을기업|광업|스마트팜|GAP|로컬\s*푸드|콘텐츠|출판|서점|"
+    r"농\s*[ㆍ·]\s*식품|석유\s*화학|전기\s*[ㆍ·]?\s*(?:수소\s*)?차|수소\s*차|배터리|PBV|탄소\s*소재|영상물|로케이션|드라마"
 )
 
 
 def judge(title, organizer="", target="", stated=""):
     """Return (keep, label) for a notice title, its target field and stated target line.
+    Kept for older callers: the judging step (judging.include) decides."""
+    from judging import include
+    return include(title, stated, target)
+
+
+def _old_judge(title, organizer="", target="", stated=""):
+    """The rules before the judging step (2026-11-22), kept only to compare old and new results.
 
     The organizer is accepted for callers' convenience but never decides anything."""
     title = title or ""
@@ -201,6 +218,7 @@ OVERLAPPING_TRADES = {
 }
 MIXED_TRADES = re.compile(r"(?:기계|금속|뿌리|물류|에너지|조선\s*기자재)" + COMPANY_TAIL)
 OTHER_TRADES = re.compile(r"(?:철강|전장\s*부품|석유\s*화학|자동차|미래\s*차|전기\s*차|이차\s*전지|배터리|반도체|디스플레이|화장품|"
+                          r"(?:미래\s*)?모빌리티|탄소\s*소재|외식|"
                           r"뷰티|바이오\s*헬스|의약품?|의료\s*기기|콘텐츠|문화\s*산업|게임|방송\s*(?:사|제작)|영상물|방산|항공|우주|섬유|패션)"
                           + COMPANY_TAIL)
 
@@ -228,7 +246,7 @@ def other_trades_only(target):
                 MARITIME_COMMON.search(kept) or SEA_TRADES.search(kept))
 
 
-SEA_TRADES = re.compile(r"선박|조선(?!일보|대학|대)|항만|해운|(?<![가-힣])선사|크루즈|해상\s*풍력|쇄빙|함정")
+SEA_TRADES = re.compile(r"선박|(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공|시대)|항만|해운(?!대)|(?<![가-힣])선사|크루즈|해상\s*풍력|쇄빙|함정")
 OPEN_TARGET = re.compile(r"누구나|모든\s*기업|업종\s*(?:무관|제한\s*없)")
 BROAD_MARITIME_TARGET = re.compile(r"해양수산\s*(?:산업|기업|분야)[^.\n]{0,20}(?:전\s*[ㆍ·]?\s*후방|연관)|"
                                    r"해양수산\s*(?:관련\s*)?(?:모든|전체)\s*(?:기업|분야)")
@@ -295,11 +313,13 @@ def age_bands(text):
     """Return the company age bands a notice is limited to, or [] when it names none."""
     text = text or ""
     bands = set()
-    if re.search(r"예비\s*(?:청년\s*)?창업|예비\s*[,·ㆍ/]\s*(?:초기|창업)", text):
+    if re.search(r"예비\s*(?:청년\s*)?창업|예비\s*[,·ㆍ/]\s*(?:초기|창업)|\(\s*예비\s*\)\s*(?:청년\s*)?창업|"
+                 r"예비\s*(?:또는|및)\s*(?:초기\s*)?창업", text):
         bands.add("prestartup")
     if re.search(r"초기\s*창업", text):
         bands.add("y0_3")
-    for number, bound in re.findall(r"(?:창업|업력|설립|개업)\s*(?:후\s*)?(\d{1,2})\s*년\s*(이내|이하|미만|이상|초과)", text):
+    # "신산업 분야 10년 이내" widens a seven-year limit for new-industry firms.
+    for number, bound in re.findall(r"(?:창업|업력|설립|개업|신산업[^,.\n)]{0,8}?)\s*(?:후\s*)?(\d{1,2})\s*년\s*(이내|이하|미만|이상|초과)", text):
         years = int(number)
         if bound in ("이상", "초과"):
             bands.update(band for band, (_, upper) in _BAND_RANGES.items() if upper > years)

@@ -14,7 +14,6 @@ const PLANNING = {
   demand: "수요 제안", opinion: "RFP 의견", planning: "기획 지원", joint: "공동기획",
   preview: "공모 예고", application: "본공모",
 };
-const MARITIME = /해양|수산|어업|어촌|해운|항만|선박|조선(?!일보|대)|기자재|크루즈|블루\s*바이오|해상\s*풍력|쇄빙|ocean|marine|maritime/i;
 const SYNONYMS = [
   ["스마트항만", "스마트 항만", "항만자동화", "항만 자동화"],
   ["스마트양식", "스마트 양식", "지능형양식", "양식 자동화"],
@@ -59,7 +58,8 @@ const typeLabels = (entry) => (entry.support?.types ?? []).map((key) => data.sup
 // Regions come from the notice's own text (collected into support.regions), not from its publisher.
 const regionsOf = (entry) => entry.support?.regions ?? [];
 const agesOf = (entry) => entry.ages ?? [];
-const isMaritime = (entry) => Boolean(entry.maritime) || MARITIME.test(entry.title);
+// Ocean events and notices are marked by the collector's judging step (judging.py), one rule for all.
+const isMaritime = (entry) => Boolean(entry.maritime);
 
 function isClosed(entry) {
   if (/\[\s*(?:접수\s*)?마감\s*\]/.test(entry.title)) return true;
@@ -337,13 +337,25 @@ function renderSupport() {
 
   summaryLine(tab, picks, shown.length);
 
+  // Notices with a deadline come first; those open until the budget runs out or all year round
+  // ("상시·예산 소진 시") are grouped below them (user decision 2026-11-22).
   shown.sort((a, b) => byDeadline(a[0], b[0]));
+  const dated = shown.filter(([entry]) => entry.deadline);
+  const open = shown.filter(([entry]) => !entry.deadline);
   const list = el("result-list");
   list.replaceChildren();
-  shown.slice(0, limit).forEach(([entry, tags]) => noticeRow(list, entry, tags));
-  if (!shown.length) addText(list, "li", "해당 공고 없음 · 선택 항목 또는 검색어 변경 필요", "empty");
-  el("more").hidden = shown.length <= limit;
-  el("more").textContent = `${(shown.length - limit).toLocaleString("ko-KR")}건 더 보기`;
+  dated.slice(0, limit).forEach(([entry, tags]) => noticeRow(list, entry, tags));
+  if (!dated.length) {
+    addText(list, "li", open.length ? "마감일이 정해진 공고 없음 · 아래 상시·예산 소진 시 공고 확인"
+      : "해당 공고 없음 · 선택 항목 또는 검색어 변경 필요", "empty");
+  }
+  el("more").hidden = dated.length <= limit;
+  el("more").textContent = `${(dated.length - limit).toLocaleString("ko-KR")}건 더 보기`;
+  el("open-wrap").hidden = !open.length;
+  el("open-summary").textContent = `상시·예산 소진 시 공고 ${open.length.toLocaleString("ko-KR")}건`;
+  const openList = el("open-list");
+  openList.replaceChildren();
+  open.forEach(([entry, tags]) => noticeRow(openList, entry, tags));
 
   const ended = closed.sort((a, b) => byDeadline(b[0], a[0]));
   el("closed-summary").textContent = `같은 조건의 마감 공고 ${ended.length}건`;
