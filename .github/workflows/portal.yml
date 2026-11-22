@@ -11,6 +11,10 @@ on:
         description: Verify official Bizinfo and K-Startup APIs without publishing
         type: boolean
         default: false
+      check_trends:
+        description: Try trade press RSS, Naver News and DDGS for industry and technology trends without publishing
+        type: boolean
+        default: false
       publish:
         description: Publish to the configured GitHub Pages site
         type: boolean
@@ -49,11 +53,17 @@ jobs:
           BIZINFO_API_KEY: ${{ secrets.BIZINFO_API_KEY }}
           BIZINFO_EVENT_API_KEY: ${{ secrets.BIZINFO_EVENT_API_KEY }}
           KSTARTUP_API_KEY: ${{ secrets.KSTARTUP_API_KEY }}
+      - name: Try trend sources (report on the run page)
+        if: inputs.check_trends && !inputs.publish
+        run: python trend_probe.py
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
       - name: Install the Korean text reader for event posters
-        if: "(!inputs.check_naver && !inputs.check_apis) || inputs.publish"
+        if: "(!inputs.check_naver && !inputs.check_apis && !inputs.check_trends) || inputs.publish"
         run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-kor
       - name: Collect public portal information
-        if: "(!inputs.check_naver && !inputs.check_apis) || inputs.publish"
+        if: "(!inputs.check_naver && !inputs.check_apis && !inputs.check_trends) || inputs.publish"
         run: python collect.py
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
@@ -62,7 +72,7 @@ jobs:
           BIZINFO_EVENT_API_KEY: ${{ secrets.BIZINFO_EVENT_API_KEY }}
           KSTARTUP_API_KEY: ${{ secrets.KSTARTUP_API_KEY }}
       - uses: actions/upload-pages-artifact@v4
-        if: "(!inputs.check_naver && !inputs.check_apis) || inputs.publish"
+        if: "(!inputs.check_naver && !inputs.check_apis && !inputs.check_trends) || inputs.publish"
         with:
           path: dist
 
