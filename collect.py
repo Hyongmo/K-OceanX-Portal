@@ -1031,7 +1031,9 @@ def bizinfo_events(get, key):
             if not keep:
                 dropped[reason] = dropped.get(reason, 0) + 1
                 continue
-            regions = [area] if area in REGIONS and area != "해외" else []
+            # Who may apply is read from the notice itself, as for other Bizinfo notices: the area
+            # field is where the course is held ("서울"), not whom it is for.
+            regions = region_hint(title, "", (), content)
             rows.append(record("bizinfo_event", number, title, url, "support",
                                opens=opens, deadline=deadline or start, deadline_time=clock,
                                event_start=start, event_end=end, publisher=organizer,
@@ -1779,8 +1781,13 @@ def poster_text(get, event):
     text = []
     for url in pictures:
         picture = get("eventus_poster", url)
+        # One thread per reading: several readings run side by side, and the reader's own threads
+        # would otherwise crowd each other out on the collection server.
         result = subprocess.run(["tesseract", "stdin", "stdout", "-l", "kor+eng", "--psm", "3"],
-                                input=picture, capture_output=True, timeout=90)
+                                input=picture, capture_output=True, timeout=180,
+                                env={**os.environ, "OMP_THREAD_LIMIT": "1"})
+        if result.returncode:
+            raise subprocess.SubprocessError(f"tesseract exit {result.returncode}")
         text.append(result.stdout.decode("utf-8", "replace"))
     # The reader takes "AI" for "Al".
     return re.sub(r"(?<![A-Za-z])Al(?![A-Za-z])", "AI", "\n".join(text))
@@ -1829,13 +1836,18 @@ def eventus_events(get):
         elif row.get("area") in EVENTUS_COAST and POSTER_WORD.search(title):
             posters.append(event)
 
+    problems = {}
+
     def read(event):
         try:
             return event, poster_text(get, event)
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            problems[type(error).__name__] = problems.get(type(error).__name__, 0) + 1
             return event, ""
+    read_text = 0
     with ThreadPoolExecutor(max_workers=4) as pool:
         for event, text in pool.map(read, posters):
+            read_text += bool(text.strip())
             if EVENT_MARITIME.search(text):
                 events.append({**event, "text": f'{event["text"]}\n{text}'.strip()})
     rows = []
@@ -1846,7 +1858,10 @@ def eventus_events(get):
                            publisher=clean(event.get("app_title") or ""), place=clean(event.get("place") or ""),
                            event_region=address_region(address),
                            event_types=[event["event_type"]], content_full=event["text"][:4000]))
-    print(f"Event-us: {len(found)} listed, {len(posters)} posters read, {len(rows)} events", flush=True)
+    print(f"Event-us: {len(found)} listed, {len(posters)} posters, {read_text} with text"
+          + (f" (reader {'on' if shutil.which('tesseract') else 'missing'}; failed: "
+             + ", ".join(f"{name} {count}" for name, count in problems.items()) + ")" if problems else "")
+          + f", {len(rows)} events", flush=True)
     return rows
 
 

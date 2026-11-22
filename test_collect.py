@@ -356,6 +356,21 @@ class OfficialApiTest(unittest.TestCase):
                          {"3": "domestic", "4": "domestic", "5": "support", "8": "support"})
         self.assertEqual(by_id["5"]["deadline"], "2026-12-01")
         self.assertEqual(by_id["5"]["support_hints"]["types"], ["people"])
+        # Whom a course is for comes from the notice, not from where it is held (areaNm "경기").
+        items = [item(9, "[전국] 탄소배출권 실무교육 모집 안내", "교육", "기업 실무자를 대상으로 합니다."),
+                 item(10, "[전북] 생성형 AI 실무 활용 마스터 과정 교육생 모집", "교육",
+                      "도내 기업 재직자 등 전북특별자치도민을 대상으로 교육을 실시합니다.")]
+        with patch("collect.kst_today", return_value="2026-11-21"):
+            rows = bizinfo_events(lambda name, url: json.dumps({"jsonArray": items}).encode(), "key")
+        for row in rows:
+            classify_support(row)
+        self.assertEqual([row["support"]["regions"] for row in rows], [["전국"], ["전북"]])
+
+    def test_named_regions_outweigh_nationwide(self):
+        entry = {"id": "x:1", "category": "support", "title": "[전국] 창업 지원",
+                 "support_hints": {"regions": ["전국", "부산"]}}
+        classify_support(entry)
+        self.assertEqual(entry["support"]["regions"], ["부산"])
 
     def test_training_titles_are_tagged_as_people_support(self):
         for title, expected in (

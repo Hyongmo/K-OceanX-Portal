@@ -134,6 +134,10 @@ def classify_support(entry):
     details = {}
     for field, (options, values) in labels.items():
         marked = values.union(review.get(field, ()))
+        # A notice limited to named regions is not also nationwide: the region read from its content
+        # or a reviewed fact outweighs "전국" from an official field or title label.
+        if field == "regions" and len(marked) > 1:
+            marked.discard("전국")
         if marked:
             details[field] = [option for option in options if option in marked]
     if details:
