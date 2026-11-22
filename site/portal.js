@@ -59,7 +59,6 @@ const typeLabels = (entry) => (entry.support?.types ?? []).map((key) => data.sup
 const regionsOf = (entry) => entry.support?.regions ?? [];
 const agesOf = (entry) => entry.ages ?? [];
 // Ocean events and notices are marked by the collector's judging step (judging.py), one rule for all.
-const isMaritime = (entry) => Boolean(entry.maritime);
 
 function isClosed(entry) {
   if (/\[\s*(?:접수\s*)?마감\s*\]/.test(entry.title)) return true;
@@ -467,39 +466,6 @@ function renderEvents() {
   el("more-events").hidden = shown.length <= eventLimit;
 }
 
-/* ---------- 산업·기술 동향 ---------- */
-
-function trendColumns(container, size) {
-  container.replaceChildren();
-  const byDate = (a, b) => (b.published || "").localeCompare(a.published || "");
-  const columns = [
-    ["산업·시장", data.records.filter((entry) => entry.category === "industry").sort(byDate)],
-    ["특허·기술", data.records.filter((entry) => entry.category === "patent").sort(byDate)],
-  ];
-  for (const [title, entries] of columns) {
-    const column = addText(container, "div", "", "column");
-    addText(column, "h3", title);
-    entries.slice(0, size).forEach((entry) => {
-      const link = addLink(column, "", entry.url, "item");
-      link.append(entry.title);
-      addText(link, "span", [sourceLabel(entry), ...(entry.industry_sectors ?? []), entry.published && shortDate(entry.published)]
-        .filter(Boolean).join(" · "));
-    });
-    if (title === "특허·기술") addText(column, "p", "특허 동향은 특허 데이터 연계 후 제공 예정");
-  }
-  const supply = addText(container, "div", "", "column");
-  addText(supply, "h3", "공급망");
-  const briefing = addLink(supply, "KMI 글로벌 공급망 AI 일일 브리핑 →", "https://scm-briefing.kmi.re.kr/", "item");
-  addText(briefing, "span", "매일 갱신 · 해상 공급망 위기 모니터링");
-  const events = addText(container, "div", "", "column");
-  addText(events, "h3", "다가오는 행사");
-  const list = addText(events, "ol", "", "plain-list");
-  upcomingEvents().filter((entry) => entry.event_start && isMaritime(entry)).slice(0, size)
-    .forEach((entry) => appendEvent(list, entry, true));
-  if (!list.childElementCount) upcomingEvents().filter((entry) => entry.event_start).slice(0, size)
-    .forEach((entry) => appendEvent(list, entry, true));
-}
-
 /* ---------- 지원기관 안내 ---------- */
 
 let agencyName = "";
@@ -574,22 +540,19 @@ function renderAgencyDetail(info) {
 
 function currentView() {
   const view = location.hash.replace("#", "");
-  return ["support", "events", "trends", "agencies"].includes(view) ? view : "support";
+  return ["support", "events", "agencies"].includes(view) ? view : "support";
 }
 
 function show() {
   const view = currentView();
-  for (const name of ["support", "events", "trends", "agencies"]) el(`view-${name}`).hidden = name !== view;
+  for (const name of ["support", "events", "agencies"]) el(`view-${name}`).hidden = name !== view;
   for (const link of document.querySelectorAll(".main-nav a")) {
     if (link.dataset.view === view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  el("digest").hidden = view === "trends";
   if (view === "support") renderSupport();
   if (view === "events") renderEvents();
-  if (view === "trends") trendColumns(el("trend-columns"), 20);
   if (view === "agencies") renderAgencies();
-  trendColumns(el("digest-columns"), 3);
 }
 
 function setup() {
