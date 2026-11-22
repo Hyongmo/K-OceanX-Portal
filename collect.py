@@ -981,7 +981,7 @@ EVENT_MARITIME = re.compile(
     r"해양|해운(?!대)|항만|선박|선급|해수부|(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공)|(?<!농)(?<!축)(?<!림)수산|"
     r"(?<!농)어업|(?<!농)어촌|어항|"
     r"스마트\s*양식|육상\s*양식|양식\s*(?:업|장|어|산업|기업|시설|기술)|해상\s*(?:풍력|물류|운송)|해사|크루즈|원양|"
-    r"북극\s*항로|maritime|ocean|shipping|aquaculture|seafood|fisher", re.I)
+    r"북극|남극|극지|maritime|ocean|shipping|aquaculture|seafood|fisher|arctic|polar", re.I)
 EVENT_AI = re.compile(r"(?<![A-Za-z])(?:AI|AX)(?![A-Za-z])|인공지능|데이터|생성형|LLM|머신\s*러닝|딥\s*러닝", re.I)
 # Paid courses, marketing and sales events, and job fairs are not events for companies to follow,
 # whatever their topic (user decision 2026-11-22).
@@ -1223,6 +1223,7 @@ def merge_exhibitions(records):
 # ---------- Events from maritime institutions and press reports ----------
 
 EVENT_WORD = re.compile(r"세미나|포럼|컨퍼런스|콘퍼런스|심포지엄|설명회|박람회|전시회|엑스포|EXPO|워크숍|토론회|공청회|"
+                        r"(?<=[가-힣])주간(?!\s*(?:동향|브리핑|보고|소식|뉴스|리포트|일정|이슈))|"
                         r"전망\s*대회|학술\s*대회|상담회|페어|FAIR|위크|WEEK|라운드\s*테이블|밋업|컨벤션", re.I)
 # Titles that report an event already held, or that are about something else than taking part.
 EVENT_DONE = re.compile(r"결과|성료|성황|마쳐|마무리|폐막|개최했|열었|열렸|가졌|진행했|참석했|사진|영상|발표\s*자료|"
@@ -1437,6 +1438,9 @@ EVENT_PAGES = (
          name="국제해양플랜트전(OFFSHORE KOREA)"),
     dict(key="upipsc", agency="울산항만공사", url="https://www.upipsc.com", name="울산항 안전 콘퍼런스"),
     dict(key="ocean_policy_forum", agency="한국해양재단", url="https://ocean.or.kr/cms/content/view/566", name="해양정책포럼"),
+    # Held each December in Busan by the ministries of oceans and foreign affairs, run by KMI and KOPRI.
+    dict(key="apw", agency="해양수산부·외교부(한국해양수산개발원·극지연구소)", url="https://www.korea-apw.com/",
+         name="북극협력주간", dated_heading=True, region="부산"),
 )
 POSTED = re.compile(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}")
 # A labelled place line ("■ 장소 : 부산 벡스코", "지역\n태국 방콕"), read only at the start of a line.
@@ -1510,10 +1514,12 @@ def page_event(get, event, today):
     start, end = event_when(text, reference)
     edition_year = re.search(r"20\d{2}", heading)
     if not start and event.get("dated_heading") and edition_year:
-        # Some event sites show the dates of the edition named in their heading with no label.
-        for match in ANY_DAY.finditer(text):
+        # Some event sites show the dates of the edition named in their heading with no label,
+        # often in a banner outside the page's main text block.
+        whole = (document.body or document).get_text("\n", strip=True)
+        for match in ANY_DAY.finditer(f"{text}\n{whole}"):
             if match["y"] == edition_year[0]:
-                first, last = _span(text, match, reference)
+                first, last = _span(f"{text}\n{whole}", match, reference)
                 if first:
                     start, end = first.isoformat(), last.isoformat() if last else ""
                     break
@@ -1522,8 +1528,11 @@ def page_event(get, event, today):
     edition = next((part.strip() for part in re.split(r"\s*[|·\-–]\s*", heading)
                     if event["name"][:4] in part and start[:4] in part), "")
     title = clean(edition) if edition else f'{start[:4]} {event["name"]}'
-    return [event_row("institution_event", f'{event["key"]}-{start[:4]}', title, event["url"], event["agency"],
-                      start, end, text)]
+    row = event_row("institution_event", f'{event["key"]}-{start[:4]}', title, event["url"], event["agency"],
+                    start, end, text)
+    if event.get("region"):
+        row["event_region"] = event["region"]
+    return [row]
 
 
 def listing_pages(get, source, url, name, count):

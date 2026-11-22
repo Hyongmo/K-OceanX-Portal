@@ -763,6 +763,19 @@ class EventusTest(unittest.TestCase):
         self.assertEqual((row["title"], row["event_region"]), ("제2회 2026 부산 기업 혁신 포럼", "부산"))
         self.assertEqual(self.run_with([forum], poster="ESG 경영 사례"), [])
 
+    def test_arctic_week_is_read_from_its_banner(self):
+        from collect import EVENT_PAGES, EVENT_WORD, page_event
+        html = ("<html><head><title>2026 북극협력주간</title></head><body><section>2026 북극협력주간"
+                "<p>2026. 12. 7. (월) – 12. 9. (수)</p><p>BPEX 5F · Busan</p></section>"
+                "<article>메인세션 북극해정책대화</article></body></html>")
+        event = next(e for e in EVENT_PAGES if e["key"] == "apw")
+        row, = page_event(lambda name, url: html.encode(), event, "2026-11-22")
+        self.assertEqual((row["title"], row["event_start"], row["event_end"], row["event_region"]),
+                         ("2026 북극협력주간", "2026-12-07", "2026-12-09", "부산"))
+        self.assertTrue(event_in_scope("2026 북극협력주간"))
+        self.assertTrue(EVENT_WORD.search("제10회 북극협력주간 개최"))
+        self.assertFalse(EVENT_WORD.search("해양수산 주간 동향"))
+
     def test_scope_words_skip_places_and_media_names(self):
         self.assertFalse(event_in_scope("해운대 문화 세미나"))
         self.assertFalse(event_in_scope("TV조선 경제아카데미"))
