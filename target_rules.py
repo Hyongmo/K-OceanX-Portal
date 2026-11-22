@@ -76,6 +76,23 @@ def judge(title, organizer="", target="", stated=""):
     return True, "업종 무관"
 
 
+# Training is kept when it serves companies in general (marketing, export, AI use, tax, IP …).
+# Training built for one trade outside ocean and fisheries, or for individual workers and job
+# seekers, is left out. A title that also names the sea keeps the training.
+OTHER_FIELD_TRAINING = re.compile(
+    r"오가노이드|(?<![A-Za-z])(?:DDS|CSO)(?![A-Za-z])|마이스|MICE|(?<![가-힣])물\s*(?:분야|기업|산업)|친환경\s*차|미래\s*차|전기\s*차|"
+    r"수소|양자|Filmmaking|영상\s*제작|Higg|로컬\s*크리에이터", re.I)
+WORKER_TRAINING = re.compile(r"훈련생|새로\s*일하기|경력\s*단절|특고|플랫폼\s*(?:노동|종사)|권리\s*보호|창업\s*멘토\s*(?:육성|양성)")
+
+
+def training_scope(title):
+    """Return (keep, label) for a training program by its title."""
+    if WORKER_TRAINING.search(title or ""):
+        return False, "개인 대상 교육"
+    if OTHER_FIELD_TRAINING.search(title or "") and not MARITIME.search(title or ""):
+        return False, "다른 분야 전용 교육"
+    return True, ""
+
 # Industries are the nine top-level classes of the ocean and fisheries industry
 # classification approved by Statistics Korea (2018). A notice tagged with an
 # industry is meant for companies in that industry.

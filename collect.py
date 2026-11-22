@@ -2,7 +2,9 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import gzip
+import hashlib
 from io import BytesIO
 import json
 import os
@@ -21,7 +23,8 @@ from ddgs.exceptions import DDGSException
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from support_taxonomy import METHODS, REGIONS, STAGES, TYPES, classify_support
-from target_rules import AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, other_trades_only, sector_profile
+from target_rules import (AGE_BANDS, MARITIME, NOT_SUPPORT, age_bands, bands_under, judge, other_trades_only, sector_profile,
+                          training_scope)
 
 ROOT = Path(__file__).resolve().parent
 DATE = r"\d{4}[-/]\d{2}[-/]\d{2}"
@@ -61,10 +64,15 @@ def clean(value):
     return " ".join(BeautifulSoup(str(value or ""), "html.parser").stripped_strings)
 
 
+# Sites that serve no https at all; their pages are linked over http.
+HTTP_ONLY_HOSTS = {"wof.kr", "www.kinpr.or.kr", "www.offshorekorea.org"}
+
+
 def record(source, key, title, url, category, **fields):
     parsed = urlsplit(url)
     title = clean(title)
-    if not key or not title or parsed.scheme != "https" or not parsed.hostname or parsed.username:
+    secure = parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in HTTP_ONLY_HOSTS)
+    if not key or not title or not secure or not parsed.hostname or parsed.username:
         raise ValueError("Invalid record identifier, title or URL")
     return {"id": f"{source}:{key}", "source": source, "title": title,
             "url": url, "category": category, **{k: v for k, v in fields.items() if v}}
@@ -677,11 +685,20 @@ def stated_regions(text):
     """Regions a target line limits applicants to, e.g. "부산 소재", "서울시에 본사", "부산ㆍ울산ㆍ경남 소재"."""
     found = set()
     places = f"{REGION_NAMES}|{CITY_NAMES}"
+    # A clause that only prefers a region ("(대전 소재 기업 우대)", "부산 기업 가점"), or a line of
+    # preferences ("** 우대조건: …, 충청북도 소재 중소기업"), limits no one.
+    lines = [line for line in (text or "").splitlines() if not re.match(r"[\W\d]*(?:우대|가점)", line)]
+    text = " ".join(part for part in re.split(r"[,.\n()（）]", "\n".join(lines)) if not re.search(r"우대|가점|우선", part))
     for group in re.findall(rf"((?:{places})(?:\s*[ㆍ·,/]\s*(?:{places}))*)[가-힣\s]{{0,10}}?(?:내\s*)?"
-                            r"(?:소재|관내|에\s*(?:본사|소재|사업장|주소)|사업장|본사|지역\s*(?:소재|기업|중소|중기업|소기업))",
+                            r"(?:소재|관내|거주|에\s*(?:본사|소재|사업장|주소|거주)|사업장|본사|지역\s*(?:소재|기업|중소|중기업|소기업))",
                             text or ""):
         for name in re.findall(places, group):
             found.add(CITY_TO_REGION.get(name) or LONG_REGIONS.get(name, name))
+    # Tenants of a place's facility ("대전 팁스타운 입주기업"), and "지역 내" next to a named place
+    # ("대전 팁스타운 입주기업 및 지역 내 창업기업"), limit applicants to that place too.
+    tenants = re.findall(rf"({places})[가-힣A-Za-z0-9\s]{{0,15}}?입주\s*(?:기업|사|업체|예정)", text or "")
+    for name in tenants:
+        found.add(CITY_TO_REGION.get(name) or LONG_REGIONS.get(name, name))
     return sorted(found)
 
 
@@ -693,7 +710,8 @@ def content_regions(title, target="", content=""):
     such as 소재·관내·본사. When the notice has content but names no region, the result is []
     (no limit). Only a notice with no content at all is read from region names in its title."""
     prefix = re.match(r"\s*\[([^\]]+)\]", title or "")
-    if prefix:
+    # Only a label of regions ("[부산]", "[전남광주]") counts, not an agency's name ("[제주창조경제혁신센터]").
+    if prefix and re.fullmatch(rf"(?:{REGION_NAMES}|광주|[ㆍ·,/\s])+", prefix[1]):
         names = [name for name in SHORT_REGIONS if name in prefix[1]]
         if names:
             return names
@@ -883,8 +901,13 @@ def kstartup_api(get, key):
             if stages:
                 hints["stages"] = stages
             regions = kstartup_regions(clean(item.get("supt_regin")))
-            # The target text decides first: "지역 제한 없음", or 전국 among the official regions, opens it.
-            if "전국" in regions or re.search(r"지역\s*(?:제한\s*(?:없|무관)|무관)|(?<![가-힣])전국|타\s*지역", target):
+            # The target text decides first: a region it names ("대전 팁스타운 입주기업 및 지역 내 창업기업")
+            # limits the notice even where the official field says 전국; "지역 제한 없음", or 전국
+            # among the official regions when the target names none, opens it.
+            named = [name for name in content_regions(title, target) if name != "전국"]
+            if named:
+                regions = named
+            elif "전국" in regions or re.search(r"지역\s*(?:제한\s*(?:없|무관)|무관)|(?<![가-힣])전국|타\s*지역", target):
                 regions = ["전국"]
             hints["regions"] = regions
             rows.append(record("kstartup", number, title, params(KSTARTUP_PAGE, schM="view", pbancSn=number),
@@ -947,6 +970,20 @@ def bizinfo_api(get, key):
     return rows
 
 
+# The event schedule keeps two groups: ocean, fisheries, shipping and port events, and AI and data
+# events. The sea is read from the title and the event text; AI and data from the title only,
+# since event texts mention data and AI in passing ("데이터 기반 마케팅").
+EVENT_MARITIME = re.compile(
+    r"해양|해운|항만|선박|조선(?!일보|대학|대)|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업|(?<!농)어촌|어항|"
+    r"스마트\s*양식|육상\s*양식|양식\s*(?:업|장|어|산업|기업|시설|기술)|해상\s*(?:풍력|물류|운송)|해사|크루즈|원양|"
+    r"북극\s*항로|maritime|ocean|shipping|aquaculture|seafood|fisher", re.I)
+EVENT_AI = re.compile(r"(?<![A-Za-z])(?:AI|AX)(?![A-Za-z])|인공지능|데이터|생성형|LLM|머신\s*러닝|딥\s*러닝", re.I)
+
+
+def event_in_scope(title, content=""):
+    return bool(EVENT_MARITIME.search(f"{title} {content}") or EVENT_AI.search(title))
+
+
 def bizinfo_events(get, key):
     today = kst_today()
     data = json.loads(get("bizinfo_event_api", keyed(BIZINFO_EVENT_API, "crtfcKey", key, dataType="json", searchCnt=0)))
@@ -973,12 +1010,31 @@ def bizinfo_events(get, key):
             continue
         opens, deadline, clock = date_range(item.get("rceptPd"))
         area = clean(item.get("areaNm"))
-        kind = clean(item.get("eventInfoTyNm"))
+        # One event can carry several types joined by "@", e.g. "교육@수출상담회".
+        kinds = [part.strip() for part in clean(item.get("eventInfoTyNm")).split("@") if part.strip()]
+        content = clean(item.get("nttCn"))
+        if "교육" in kinds:
+            # Training is a support program, listed with the others under 인재·교육 in the finder.
+            keep, reason = training_scope(title)
+            if not keep:
+                dropped[reason] = dropped.get(reason, 0) + 1
+                continue
+            regions = [area] if area in REGIONS and area != "해외" else []
+            rows.append(record("bizinfo_event", number, title, url, "support",
+                               opens=opens, deadline=deadline or start, deadline_time=clock,
+                               event_start=start, event_end=end, publisher=organizer,
+                               topic=shorten(content, 140), content_full=content,
+                               agency_region=agency_region(organizer), maritime=label == "해양 특화",
+                               support_hints={"types": ["people"], "methods": ["service"], "regions": regions}))
+            continue
+        if not event_in_scope(title, content):
+            dropped["해양수산·AI·데이터 밖 행사"] = dropped.get("해양수산·AI·데이터 밖 행사", 0) + 1
+            continue
         rows.append(record("bizinfo_event", number, title, url,
                            "international" if re.search(r"해외|국외", area) else "domestic",
                            event_start=start, event_end=end, opens=opens, deadline=deadline, deadline_time=clock,
-                           event_region=area, publisher=organizer, topic=shorten(item.get("nttCn"), 140),
-                           event_types=[kind] if kind else [], maritime=label == "해양 특화"))
+                           event_region=area, publisher=organizer, topic=shorten(content, 140),
+                           event_types=kinds, maritime=label == "해양 특화"))
     tally("bizinfo_event", dropped, len(rows))
     return rows
 
@@ -1148,6 +1204,543 @@ def merge_exhibitions(records):
             })
             del records[notice["id"]]
 
+
+
+# ---------- Events from maritime institutions and press reports ----------
+
+EVENT_WORD = re.compile(r"세미나|포럼|컨퍼런스|콘퍼런스|심포지엄|설명회|박람회|전시회|엑스포|EXPO|워크숍|토론회|공청회|"
+                        r"전망\s*대회|학술\s*대회|상담회|페어|FAIR|위크|WEEK|라운드\s*테이블|밋업|컨벤션", re.I)
+# Titles that report an event already held, or that are about something else than taking part.
+EVENT_DONE = re.compile(r"결과|성료|성황|마쳐|마무리|폐막|개최했|열었|열렸|가졌|진행했|참석했|사진|영상|발표\s*자료|"
+                        r"취소|연기|수상|시상|선정")
+EVENT_LABEL = re.compile(r"(?:일\s*시|일\s*자|일\s*정|기\s*간|개최\s*일(?:자|시)?|행사\s*일(?:자|시)?|교육\s*일(?:자|시)?|날\s*짜)"
+                         r"\s*[:：\-]?\s*")
+EVENT_VERB = re.compile(r"개최|열린다|연다|열리는|열릴|여는|개막|진행(?:된다|한다|하는|되는|될)|마련한다|선보인다")
+# Dates as notices and press reports write them: "2026. 12. 3.", "’26.12.3.", "12월 3일", "12.3.(목)",
+# "12.3.~5.", "오는 3일" and, in a sentence about the event, a bare "22일" (not the "16일 밝혔다" of the report).
+ANY_DAY = re.compile(
+    r"(?P<y>20\d{2})\s*[.\-/년]\s*(?P<m>\d{1,2})\s*[.\-/월]\s*(?P<d>\d{1,2})(?!\d)"
+    r"|[’'‘](?P<y2>\d{2})\s*\.\s*(?P<m5>\d{1,2})\s*\.\s*(?P<d5>\d{1,2})(?!\d)"
+    r"|(?<![\d.])(?P<m2>\d{1,2})\s*월\s*(?P<d2>\d{1,2})\s*일"
+    r"|(?<![\d.])(?P<m3>\d{1,2})\s*\.\s*(?P<d3>\d{1,2})\s*\.?(?=\s*[(~∼～])"
+    r"|오는\s*(?P<d4>\d{1,2})\s*일"
+    r"|(?<![\d.월\-~])(?P<d6>\d{1,2})\s*일(?!\s*(?:밝혔|발표|전했|알렸|말했|기준|간|이내|부로))")
+SPAN_DAYS = re.compile(r"\s*일?\s*(?:\([^)]{0,12}\))?\s*(?:부터\s*)?(이틀|사흘|나흘|닷새|\d{1,2}일)\s*간")
+SPAN_COUNT = {"이틀": 2, "사흘": 3, "나흘": 4, "닷새": 5}
+RANGE_TAIL = re.compile(r"\.?\s*일?\s*(?:\([^)]{0,12}\))?\s*(?:\d{1,2}:\d{2}\s*)?(?:~|∼|～|-|–|부터)\s*")
+DAY_ONLY = re.compile(r"(?<![\d.])(\d{1,2})\s*일(?!\s*간)|(?<![\d.])(\d{1,2})\s*\.?\s*(?=\()|(?<![\d.])(\d{1,2})\.(?!\d)")
+
+
+# Sentences end at "…다." or a line break; a full stop alone may belong to a date ("11.3.~5.").
+SENTENCE_END = re.compile(r"(?<=다)\.\s*|\n")
+
+
+def _day(year, month, day):
+    try:
+        return date(int(year), int(month), int(day))
+    except ValueError:
+        return None
+
+
+def _read_day(match, reference):
+    """The date a match names, read against the day the text was written."""
+    if match["y"]:
+        return _day(match["y"], match["m"], match["d"])
+    if match["y2"]:
+        return _day(2000 + int(match["y2"]), match["m5"], match["d5"])
+    if match["d6"]:
+        # A bare day is in the month of writing; one already past reports a past event.
+        return _day(reference.year, reference.month, match["d6"])
+    if match["d4"]:
+        day = int(match["d4"])
+        month, year = reference.month, reference.year
+        if day < reference.day:
+            month, year = (1, year + 1) if month == 12 else (month + 1, year)
+        return _day(year, month, day)
+    month, day = (match["m2"], match["d2"]) if match["m2"] else (match["m3"], match["d3"])
+    found = _day(reference.year, month, day)
+    # A month and day without a year that fall well before the text was written belong to next year.
+    if found and found < reference - timedelta(days=60):
+        found = _day(reference.year + 1, month, day)
+    return found
+
+
+def _span(text, match, reference):
+    start = _read_day(match, reference)
+    if not start:
+        return None, None
+    tail = RANGE_TAIL.match(text, match.end())
+    end = None
+    length = SPAN_DAYS.match(text, match.end())
+    if length:
+        count = SPAN_COUNT.get(length[1]) or int(length[1][:-1])
+        end = start + timedelta(days=count - 1)
+    elif tail:
+        following = ANY_DAY.match(text, tail.end())
+        if following:
+            end = _read_day(following, start)
+        else:
+            day = DAY_ONLY.match(text, tail.end())
+            if day:
+                end = _day(start.year, start.month, day[1] or day[2] or day[3])
+    if end and not (start <= end <= start + timedelta(days=60)):
+        end = None
+    return start, end
+
+
+def event_when(text, reference):
+    """(start, end) of the event a notice or report describes, as ISO dates; ("", "") when unclear.
+
+    A labelled line ("일시: 2026. 12. 3.(목)") decides first; otherwise the first sentence that says
+    the event is held ("오는 3일 부산에서 개최한다") does. Dates elsewhere in the text are not used."""
+    text = text or ""
+    for label in EVENT_LABEL.finditer(text):
+        match = ANY_DAY.match(text, label.end()) or ANY_DAY.search(text[:label.end() + 25], label.end())
+        if match:
+            start, end = _span(text, match, reference)
+            if start:
+                return start.isoformat(), end.isoformat() if end else ""
+    for sentence in re.split(SENTENCE_END, text):
+        if not EVENT_VERB.search(sentence):
+            continue
+        match = ANY_DAY.search(sentence)
+        if match:
+            start, end = _span(sentence, match, reference)
+            if start:
+                return start.isoformat(), end.isoformat() if end else ""
+    return "", ""
+
+
+def upcoming(start, end, today, days=300):
+    """True for an event that has not ended and starts within the coming days (ten months for dates
+    read from text; schedules that state their dates may look further)."""
+    return bool(start) and (end or start) >= today and start <= (
+        date.fromisoformat(today) + timedelta(days=days)).isoformat()
+
+
+def kmi_events(get):
+    # The KMI seminar board lists each seminar with the day it is held.
+    url = "https://www.kmi.re.kr/web/board/list.do?rbsIdx=165"
+    today = kst_today()
+    links = require(page(get, "kmi_events", url).select('a[href*="rbsIdx=165"][href*="idx="]'))
+    rows = []
+    for link in links:
+        title, held = link.select_one(".tit"), link.select_one(".data")
+        start = iso(held.get_text(strip=True)) if held else ""
+        if not title or not upcoming(start, "", today, days=400):
+            continue
+        rows.append(record("kmi_event", parse_qs(urlsplit(link["href"]).query)["idx"][0],
+                           title.get_text(" ", strip=True), urljoin(url, link["href"]), "domestic",
+                           event_start=start, publisher="한국해양수산개발원", maritime=True))
+    return rows
+
+
+def bexco_events(get):
+    # BEXCO, Busan's exhibition centre, lists coming events with their dates; only ocean,
+    # fisheries and AI or data events are kept.
+    base = "https://www.bexco.co.kr/kor/CMS/EventScheduleMgr/list.do"
+    today = kst_today()
+    rows, listed = [], 0
+    for number in range(1, 9):
+        links = page(get, "bexco", params(base, mCode="MN214", page=number)).select(
+            'a[href*="EventScheduleMgr/view.do"]')
+        if not links:
+            break
+        for link in links:
+            subject, when = link.select_one(".subject"), link.select_one(".date")
+            if not subject or not when:
+                continue
+            listed += 1
+            title = subject.get_text(" ", strip=True)
+            dates = re.findall(DATE, when.get_text(" ", strip=True))
+            start, end = (iso(dates[0]), iso(dates[-1])) if dates else ("", "")
+            kind = link.select_one(".eventIcon")
+            kind = kind.get_text(strip=True) if kind else ""
+            # Rented meeting rooms (courses, dinners) are not public events unless named as one.
+            if kind == "공연" or (kind != "전시" and not EVENT_WORD.search(title)):
+                continue
+            if not upcoming(start, end, today, days=400) or not event_in_scope(title):
+                continue
+            place = link.select_one(".place")
+            number_id = parse_qs(urlsplit(link["href"]).query).get("event_seq", [""])[0]
+            rows.append(record("bexco", number_id, title, urljoin(base, link["href"]), "domestic",
+                               event_start=start, event_end=end if end != start else "", event_region="부산",
+                               place=place.get_text(" ", strip=True) if place else "BEXCO",
+                               publisher="BEXCO", event_types=[kind] if kind else []))
+    if not listed:
+        raise ValueError("BEXCO schedule has no recognizable events")
+    return rows
+
+
+# Event pages of maritime institutions, associations, societies and venues, from the survey of
+# 2026-11-22. Three kinds:
+#  - board: a notice list; each notice whose title names an event is opened and its "일시" line
+#    (or the sentence that says it is held) gives the dates.
+#  - page: the page of one recurring event (a forum, an exhibition), read for its next dates.
+#  - the schedules of COEX, KINTEX and the 해양생물자원관 list each event with its dates (own readers).
+# A site that does not answer leaves only its own events out.
+BOARDS = (
+    dict(key="kriso", agency="선박해양플랜트연구소", url="https://www.kriso.re.kr/menu.es?mid=a10401000000",
+         link=r"board\.es\?mid=a10401000000&bid=0010&act=view&list_no=(\d+)",
+         detail="https://www.kriso.re.kr/board.es?mid=a10401000000&bid=0010&act=view&list_no={}"),
+    dict(key="kopri", agency="극지연구소", url="https://www.kopri.re.kr/kopri/html/comm/0401.html",
+         link=r"\?mode=V&no=([0-9a-f]{32})", detail="https://www.kopri.re.kr/kopri/html/comm/0401.html?mode=V&no={}"),
+    dict(key="busan_mof", agency="부산지방해양수산청", url="https://busan.mof.go.kr/ko/board.do?menuIdx=4480",
+         link=r"board\.do\?menuIdx=4480&bbsIdx=(\d+)", detail="https://busan.mof.go.kr/ko/board.do?menuIdx=4480&bbsIdx={}"),
+    dict(key="busan_mof_notice", agency="부산지방해양수산청", url="https://busan.mof.go.kr/ko/board.do?menuIdx=4468",
+         link=r"board\.do\?menuIdx=4468&bbsIdx=(\d+)", detail="https://busan.mof.go.kr/ko/board.do?menuIdx=4468&bbsIdx={}"),
+    dict(key="fira", agency="한국수산자원공단", url="https://www.fira.or.kr/newfira/web/news/news01_01.jsp",
+         link=r"mode=view&article_no=(\d+)",
+         detail="https://www.fira.or.kr/newfira/web/news/news01_01.jsp?mode=view&article_no={}"),
+    dict(key="kr", agency="한국선급", url="https://www.krs.co.kr/kor/BBS/BF_Main.aspx?MRID=913&URID=909",
+         link=r"frmView\('([A-Za-z0-9+/=]+)'", every_title=True, overseas=True,
+         detail="https://www.krs.co.kr/kor/BBS/BF_View.aspx?PMODE=E&MRID=913&URID=909&BF_ROWID={}"),
+    dict(key="kims", agency="한국해양전략연구소", url="https://kims.or.kr/notice/",
+         link=r"kims\.or\.kr/news/notice/([\w%-]+)/", detail="https://kims.or.kr/news/notice/{}/"),
+    dict(key="ocean_foundation", agency="한국해양재단", url="https://ocean.or.kr/brd/board/2219/L/menu/586",
+         link=r"bbIdx=(\d+)", detail="https://ocean.or.kr/brd/board/2219/L/menu/586?brdType=R&bbIdx={}"),
+    dict(key="seapower", agency="대한민국해양연맹", url="https://www.seapower.or.kr/notice/category/2242",
+         link=r"seapower\.or\.kr/notice/(\d+)", detail="https://seapower.or.kr/notice/{}"),
+    dict(key="kinpr", agency="한국항해항만학회", url="http://www.kinpr.or.kr/bbs/board.php?bo_table=noticee",
+         link=r"bo_table=noticee&(?:amp;)?wr_id=(\d+)", detail="http://www.kinpr.or.kr/bbs/board.php?bo_table=noticee&wr_id={}"),
+    dict(key="snak", agency="대한조선학회", url="https://www.snak.or.kr/05_board/board01.html",
+         link=r"Item=board2&(?:amp;)?mode=view&(?:amp;)?s_t=1&(?:amp;)?No=(\d+)",
+         detail="https://www.snak.or.kr/05_board/board01.html?Item=board2&mode=view&s_t=1&No={}"),
+    dict(key="ksoe", agency="한국해양공학회", url="https://www.ksoe.or.kr/bbs/board.php?bo_table=conference",
+         link=r"bo_table=conference&(?:amp;)?wr_id=(\d+)", every_title=True,
+         detail="https://www.ksoe.or.kr/bbs/board.php?bo_table=conference&wr_id={}"),
+    dict(key="kosfas", agency="한국수산과학회", url="https://www.kosfas.or.kr/05/01.php",
+         link=r"05/01\.php\?[^\"']*?(?:idx|no|uid)=(\d+)", detail="https://www.kosfas.or.kr/05/01.php?mode=view&idx={}"),
+    dict(key="btp", agency="부산테크노파크", url="https://www.btp.or.kr/kor/CMS/Board/Board.do?mCode=MN018",
+         link=r"mgr_seq=35&(?:amp;)?board_seq=(\d+)",
+         detail="https://www.btp.or.kr/kor/CMS/Board/Board.do?mCode=MN018&mode=view&mgr_seq=35&board_seq={}"),
+)
+EVENT_PAGES = (
+    dict(key="wof", agency="세계해양포럼(한국해양산업협회)", url="http://wof.kr/", name="세계해양포럼", dated_heading=True),
+    dict(key="oceaninnoweek", agency="해양수산과학기술진흥원", url="https://oceaninnoweek.com/about",
+         name="해양수산과학기술주간(OCEAN INNO WEEK)"),
+    dict(key="offshorekorea", agency="국제해양플랜트전 사무국", url="http://www.offshorekorea.org/kor/main/main.html",
+         name="국제해양플랜트전(OFFSHORE KOREA)"),
+    dict(key="upipsc", agency="울산항만공사", url="https://www.upipsc.com", name="울산항 안전 콘퍼런스"),
+    dict(key="ocean_policy_forum", agency="한국해양재단", url="https://ocean.or.kr/cms/content/view/566", name="해양정책포럼"),
+)
+POSTED = re.compile(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}")
+# A labelled place line ("■ 장소 : 부산 벡스코", "지역\n태국 방콕"), read only at the start of a line.
+REGION_WORD = re.compile(r"(?m)^[\s■□○●◦·*\-–]*(?:지역|장소|개최\s*장소|개최지|행사장)\s*[:：]?\s*\n?([^\n]{2,40})")
+DOMESTIC_PLACE = re.compile(r"국내|온라인|벡스코|BEXCO|코엑스|COEX|킨텍스|KINTEX|BPEX|엑스코|EXCO|송도|국회|대한민국|한국", re.I)
+
+
+def notice_text(document):
+    for removed in document(["script", "style"]):
+        removed.decompose()
+    body = next((document.select_one(selector) for selector in (
+        "#dic_area", "#newsct_article", "#article-view-content-div", "#real_contents", "#bo_v_con", "article",
+        ".board_view", ".bbs_view", ".view_cont", ".view", "#contents", "#content") if document.select_one(selector)),
+        document.body or document)
+    return body.get_text("\n", strip=True)
+
+
+def event_row(source, key, title, url, agency, start, end, text="", published="", overseas=False):
+    """An event record. Where a list holds events abroad too (overseas=True), one whose place line
+    names no Korean place goes to the overseas list."""
+    place = REGION_WORD.search(text or "")
+    place = clean(place[1]) if place else ""
+    abroad = overseas and bool(place) and not (re.search(REGION_NAMES + r"|" + CITY_NAMES, place) or
+                                               DOMESTIC_PLACE.search(place))
+    return record(source, key, title, url, "international" if abroad else "domestic", event_start=start,
+                  event_end=end if end != start else "", publisher=agency, published=published,
+                  event_region=shorten(place, 30) if abroad else event_place(f"{place}에서") or "",
+                  content_full=(text or "")[:4000])
+
+
+def board_events(get, board, today):
+    listing = page(get, board["key"], board["url"])
+    rows, seen = [], set()
+    for anchor in listing.select("a"):
+        match = re.search(board["link"], f'{anchor.get("href", "")} {anchor.get("onclick", "")}')
+        title = " ".join(anchor.get_text(" ", strip=True).split())
+        if not match or match[1] in seen or len(title) < 4:
+            continue
+        # Exhibition and conference lists name events by their own names ("SMM 2026"); other boards
+        # are read only where the title says an event is held.
+        if not board.get("every_title") and (not EVENT_WORD.search(title) or EVENT_DONE.search(title)):
+            continue
+        seen.add(match[1])
+        row = anchor.find_parent(["tr", "li"]) or anchor
+        posted = POSTED.search(row.get_text(" ", strip=True))
+        posted = date.fromisoformat("-".join(f"{int(part):02}" for part in re.split(r"[./-]", posted[0]))) \
+            if posted else date.fromisoformat(today)
+        if (date.fromisoformat(today) - posted).days > 120:
+            continue
+        address = board["detail"].format(match[1])
+        try:
+            text = notice_text(page(get, board["key"], address))
+        except PLANNING_HTTP:
+            continue
+        start, end = event_when(text, posted)
+        if not upcoming(start, end, today) or not event_in_scope(title, text):
+            continue
+        title = re.split(r"\s*[•·]\s*(?:행사명|일자|장소)\s*:", title)[0]
+        rows.append(event_row("institution_event", f'{board["key"]}-{match[1][:40]}', title, address,
+                              board["agency"], start, end, text, posted.isoformat(),
+                              overseas=board.get("overseas", False)))
+    return rows
+
+
+def page_event(get, event, today):
+    """The next edition of a recurring event, from its own page: its name and the first dates on it."""
+    document = page(get, event["key"], event["url"])
+    heading = document.title.get_text(" ", strip=True) if document.title else ""
+    text = notice_text(document)
+    reference = date.fromisoformat(today)
+    start, end = event_when(text, reference)
+    edition_year = re.search(r"20\d{2}", heading)
+    if not start and event.get("dated_heading") and edition_year:
+        # Some event sites show the dates of the edition named in their heading with no label.
+        for match in ANY_DAY.finditer(text):
+            if match["y"] == edition_year[0]:
+                first, last = _span(text, match, reference)
+                if first:
+                    start, end = first.isoformat(), last.isoformat() if last else ""
+                    break
+    if not upcoming(start, end, today, days=400):
+        return []
+    edition = next((part.strip() for part in re.split(r"\s*[|·\-–]\s*", heading)
+                    if event["name"][:4] in part and start[:4] in part), "")
+    title = clean(edition) if edition else f'{start[:4]} {event["name"]}'
+    return [event_row("institution_event", f'{event["key"]}-{start[:4]}', title, event["url"], event["agency"],
+                      start, end, text)]
+
+
+def listing_pages(get, source, url, name, count):
+    """The first pages of a list; a page after the first that does not answer ends the list."""
+    for number in range(1, count + 1):
+        try:
+            yield page(get, source, params(url, **{name: number}))
+        except PLANNING_HTTP:
+            if number == 1:
+                raise
+            return
+
+
+def coex_events(get, today):
+    # COEX lists every coming event with its dates; only ocean, fisheries and AI or data events stay.
+    base = "https://www.coex.co.kr/event/full-schedules/"
+    rows = []
+    for document in listing_pages(get, "coex", base, "var_page", 8):
+        cards = document.select('a[href*="/exhibitions/"]')
+        if not cards:
+            break
+        for card in cards:
+            text = " ".join(card.get_text(" ", strip=True).split())
+            dates = re.findall(r"20\d{2}\.\d{2}\.\d{2}", text)
+            if not dates:
+                continue
+            title = re.sub(r"^(?:Exhibition|Convention|Pop-up/Event|Event|Performance)\s+", "", text.split(dates[0])[0]).strip()
+            start, end = iso(dates[0].replace(".", "-")), iso(dates[-1].replace(".", "-"))
+            if not title or not upcoming(start, end, today, days=400) or not event_in_scope(title):
+                continue
+            rows.append(event_row("institution_event", f"coex-{re.sub(r'[^0-9a-z]', '', card['href'].lower())[-40:]}",
+                                  title, urljoin(base, card["href"]), "COEX", start, end, "장소: 서울 COEX"))
+    return list({row["id"]: row for row in rows}.values())
+
+
+def kintex_events(get, today):
+    # KINTEX lists its coming exhibitions, conferences and other events with their dates.
+    url = "https://www.kintex.com/web/ko/event/list.do"
+    rows = []
+    cards = [card for document in listing_pages(get, "kintex", url, "pageIndex", 6)
+             for card in document.select("a.btn-square-item")]
+    for card in cards:
+        when = card.select_one(".item-date")
+        name = card.select_one(".item-subject")
+        number = re.search(r"fnView\([^,]*,\s*(\d+)", card.get("href", ""))
+        dates = re.findall(r"20\d{2}\.\d{2}\.\d{2}", when.get_text(" ", strip=True)) if when else []
+        if not name or not dates or not number:
+            continue
+        title = " ".join(name.get_text(" ", strip=True).split())
+        start, end = iso(dates[0].replace(".", "-")), iso(dates[-1].replace(".", "-"))
+        if not upcoming(start, end, today, days=400) or not event_in_scope(title):
+            continue
+        rows.append(event_row("institution_event", f"kintex-{number[1]}", title, url, "KINTEX", start, end,
+                              "장소: 경기 고양 KINTEX"))
+    return list({row["id"]: row for row in rows}.values())
+
+
+def mabik_events(get, today):
+    # The 해양생물자원관 lists its events with dates and audiences; family and children's programmes
+    # are not company events and stay out.
+    url = "https://www.mabik.re.kr/prog/clturEvnt/kor/sub01_08/list.do"
+    rows = []
+    for item in page(get, "mabik", url).select("li"):
+        text = " ".join(item.get_text(" ", strip=True).split())
+        held = re.search(r"행사일시\s*(20\d{2}-\d{2}-\d{2})\s*~\s*(20\d{2}-\d{2}-\d{2})", text)
+        if not held or re.search(r"대상\s*\S*(?:초등|가족|어린이|유아|청소년|전\s*연령)", text):
+            continue
+        link = item.find("a", href=True)
+        title = re.sub(r"^.*?(?:오프라인|온라인)\s*행사\s*", "", text.split("행사일시")[0]).strip()
+        if not link or not upcoming(held[1], held[2], today) or not event_in_scope(title, text):
+            continue
+        rows.append(event_row("institution_event", f"mabik-{re.sub(r'\W', '', title)[:30]}-{held[1]}", title,
+                              urljoin(url, link["href"]), "국립해양생물자원관", held[1], held[2], text))
+    return rows
+
+
+def institution_events(get):
+    today = kst_today()
+    rows, failed = [], []
+    readers = [(board["key"], lambda board=board: board_events(get, board, today)) for board in BOARDS]
+    readers += [(event["key"], lambda event=event: page_event(get, event, today)) for event in EVENT_PAGES]
+    readers += [("coex", lambda: coex_events(get, today)), ("kintex", lambda: kintex_events(get, today)),
+                ("mabik", lambda: mabik_events(get, today))]
+    counts = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        jobs = [(key, pool.submit(read)) for key, read in readers]
+        for key, job in jobs:
+            try:
+                found = job.result()
+            except Exception:  # noqa: BLE001 - one site's failure leaves only its own events out
+                failed.append(key)
+                continue
+            counts[key] = len(found)
+            rows.extend(found)
+    print("institution events: " + ", ".join(f"{key} {count}" for key, count in counts.items() if count) +
+          (f"; unreachable {', '.join(failed)}" if failed else ""), flush=True)
+    if len(failed) == len(readers):
+        raise ValueError("No institution event page could be read")
+    return list({row["id"]: row for row in rows}.values())
+
+
+# Institutions whose events reach the press: the maritime institutions and associations in the
+# survey of 2026-11-22 (ministry and its agencies, public bodies, research institutes, shipping,
+# port, shipbuilding and fisheries associations, societies, universities, regional support centres,
+# exhibition organisers), less those that rarely hold events for companies. Their own boards are often
+# closed to collection from abroad, so press reports naming them are searched instead.
+NEWS_INSTITUTIONS = (
+    "해양수산부", "국립수산물품질관리원", "국립해양조사원", "국립해양측위정보원", "해양수산인재개발원", "부산지방해양수산청", "인천지방해양수산청", "여수지방해양수산청", "마산지방해양수산청",
+    "동해지방해양수산청", "군산지방해양수산청", "목포지방해양수산청", "포항지방해양수산청", "평택지방해양수산청", "울산지방해양수산청", "대산지방해양수산청", "중앙해양안전심판원",
+    "국립수산과학원", "해양환경공단", "한국해양교통안전공단", "국립해양박물관", "국립해양과학관", "해양수산과학기술진흥원", "한국해양과학기술원", "국립해양생물자원관", "한국해양조사협회",
+    "한국수산자원공단", "한국어촌어항공단", "한국해양진흥공사", "한국해양수산연수원", "부산항만공사", "인천항만공사", "여수광양항만공사", "울산항만공사", "한국항로표지기술원",
+    "한국해양수산개발원", "선박해양플랜트연구소", "극지연구소", "한국조선해양기자재연구원", "한국선급", "한국해사문제연구소", "한국해양전략연구소", "한국해사위험물검사원", "한국해양재단",
+    "해양과학기술 산학연 협력센터", "한국해운협회", "대한민국해양연맹", "한국항만물류협회", "목포해양대학교", "한국도선사협회", "한국선박관리산업협회", "한국선주상호보험조합",
+    "한국예선업협동조합", "한국해기사협회", "한국해양대학교", "한국해운조합", "한국해운세제학회", "한국해운중개업협회", "부산항만산업협회", "한국검수검정협회", "한국국제물류협회",
+    "한국국제해운대리점협회", "한국선원복지고용센터", "한국항만협회", "한국항해항만학회", "한국해법학회", "한국해사법학회", "한국해사재단", "한국해사포럼", "한국해양교육연구회",
+    "한국해양구조협회", "한국해양수산기업협회", "한국해운대리점협회", "한국해운물류학회", "해양환경안전학회", "수협중앙회", "부산공동어시장", "한국수산업경영인중앙연합회", "한국수산회",
+    "한국원양산업협회", "한국수산무역협회", "한국수산종자산업협회", "한국농수산식품유통공사", "한국수산기자재협회", "한국수산과학총연합회", "한국수산물유통가공협회", "전국근해어업인연합회",
+    "한국김산업연합회", "한국수산경영학회", "한국수산과학회", "한국수산해양기술학회", "한국어류학회", "한국어병학회", "한국패류학회", "부경대학교", "군산대학교", "제주대학교",
+    "한국농수산대학교", "한국조선해양플랜트협회", "한국조선해양기자재공업협동조합", "중소조선연구원", "한국해양산업협회", "한국해양과학기술협의회", "대한조선학회", "한국해안·해양공학회",
+    "한국해양공학회", "한국해양학회", "한국해양환경·에너지학회", "한국항만경제학회", "경상국립대학교 해양과학대학", "전남대학교 수산해양대학", "한국수상레저안전협회", "한국해양레저산업협회",
+    "한국풍력산업협회", "부산테크노파크", "제주테크노파크", "환동해산업연구원", "강릉과학산업진흥원", "전남 해양수산 창업투자지원센터", "충남테크노파크", "전북바이오융합산업진흥원",
+    "경남테크노파크", "경남항노화연구원", "BEXCO", "부산항국제전시컨벤션센터", "COEX", "KINTEX", "코마린", "국제해양플랜트전", "부산국제수산엑스포", "경기국제보트쇼",
+    "해양수산과학기술주간", "세계해양포럼", "해양산업통합클러스터", "부산수산자원연구소", "인천수산자원연구소", "경기도해양수산자원연구소", "강원특별자치도 수산자원연구원", "충남수산자원연구소",
+    "전북수산기술연구소", "전남해양수산과학원", "경북어업기술원", "경북수산자원연구원", "경남수산안전기술원", "울산수산자원연구소", "제주해양수산연구원", "코리아씨푸드쇼", "부산국제보트쇼",
+    "인천국제해양포럼",
+)
+EVENT_TOPICS = (
+    "해양수산 전망대회", "해양수산 세미나 개최", "해양수산 포럼 개최", "해운 세미나 개최", "해운 포럼 개최",
+    "항만 세미나 개최", "항만 포럼 개최", "조선해양 포럼 개최", "조선해양 세미나 개최", "수산 포럼 개최",
+    "수산 세미나 개최", "해양 심포지엄 개최", "해양 컨퍼런스 개최", "해양산업 박람회", "해양 AI 세미나",
+    "해양 데이터 포럼", "스마트항만 세미나", "자율운항선박 포럼", "스마트양식 세미나", "조선 AI 세미나",
+)
+QUOTED = re.compile(r"[‘'“\"「『<〈《]([^’'”\"」』>〉》]{4,60})[’'”\"」』>〉》]")
+
+
+def event_name(title):
+    """The event's own name when a headline quotes it ("…, '2027 해양수산 전망대회' 개최")."""
+    for name in QUOTED.findall(title):
+        if EVENT_WORD.search(name):
+            return name.strip()
+    return title
+
+
+def event_place(sentence):
+    """The region of the venue named right before "에서" ("부산 벡스코에서"); "" when none is named."""
+    for venue in re.finditer(r"에서", sentence):
+        window = sentence[max(0, venue.start() - 25):venue.start()]
+        found = [(m.start(), CITY_TO_REGION[m[0]]) for m in re.finditer(CITY_NAMES, window)]
+        found += [(m.start(), LONG_REGIONS.get(m[0], m[0])) for m in re.finditer(REGION_NAMES, window)]
+        if found:
+            return max(found)[1]
+    return ""
+
+
+def naver_events(get):
+    headers = naver_headers()
+    if not headers:
+        print("Naver keys missing; press reports skipped", file=sys.stderr)
+        return []
+    today = kst_today()
+    candidates = {}
+    queries = (*[f"{name} 개최" for name in NEWS_INSTITUTIONS], *EVENT_TOPICS)
+    answered = 0
+    for query in queries:
+        url = params("https://openapi.naver.com/v1/search/news.json", query=query, display=30, sort="date")
+        try:
+            items = json.loads(get("naver", url, headers))["items"]
+        except (OSError, ValueError, KeyError):
+            continue
+        answered += 1
+        for item in items:
+            title, summary = clean(item.get("title")), clean(item.get("description"))
+            if not EVENT_WORD.search(title) or EVENT_DONE.search(title):
+                continue
+            posted = parsedate_to_datetime(item["pubDate"]).date()
+            if (date.fromisoformat(today) - posted).days > 45 or not event_in_scope(title, summary):
+                continue
+            # The Naver copy is preferred: it is always https and keeps one layout.
+            link = next((value for value in (item.get("link"), item.get("originallink"))
+                         if str(value or "").startswith("https://")), "")
+            if link:
+                candidates.setdefault(link, (title, summary, posted))
+    if not answered:
+        raise ValueError("Naver News answered none of the event searches")
+    rows = {}
+    for link, (title, summary, posted) in list(candidates.items())[:200]:
+        text = f"{title}\n{summary}"
+        try:
+            text += "\n" + notice_text(page(get, "naver_article", link))
+        except PLANNING_HTTP:
+            pass
+        start, end = event_when(text, posted)
+        if not upcoming(start, end, today):
+            continue
+        name = event_name(title)
+        # One event reported by several papers is listed once.
+        key = re.sub(r"\W|20\d{2}년?|제\s*\d+\s*회", "", name)[:40] + start
+        if key in rows:
+            continue
+        sentence = next((part for part in re.split(SENTENCE_END, text)
+                         if EVENT_VERB.search(part) and ANY_DAY.search(part)), "")
+        rows[key] = record("naver_event", hashlib.sha1(key.encode()).hexdigest()[:12], name, link, "domestic",
+                           event_start=start, event_end=end, published=posted.isoformat(),
+                           event_region=event_place(sentence), topic=shorten(summary, 140),
+                           content_full=text[:4000])
+    print(f"press reports: {len(candidates)} candidates, {len(rows)} events", flush=True)
+    return list(rows.values())
+
+
+def drop_event_duplicates(records):
+    """One event listed by several sources is kept once, from the source that states its dates."""
+    rank = {"kmi_event": 0, "bexco": 1, "institution_event": 2, "naver_event": 9}
+    kept = set()
+    for key, entry in sorted(((key, entry) for key, entry in records.items()
+                              if entry["category"] in ("domestic", "international") and entry.get("event_start")),
+                             key=lambda pair: rank.get(pair[1]["source"], 5)):
+        name = re.sub(r"\[[^\]]*\]|\W|20\d{2}년?|제\s*\d+\s*회", "", event_name(entry["title"]))[:20]
+        if (name, entry["event_start"]) in kept:
+            del records[key]
+        else:
+            kept.add((name, entry["event_start"]))
+
+
+def optional(collect):
+    def run(get):
+        try:
+            return collect(get)
+        except Exception as error:  # noqa: BLE001 - reported and skipped, see build()
+            print(f"{collect.__name__} skipped: {type(error).__name__}", file=sys.stderr, flush=True)
+            return []
+    return run
 
 def naver_headers():
     client_id = os.getenv("NAVER_CLIENT_ID")
@@ -1356,6 +1949,12 @@ def build(samples):
         sources["nipa_demand"] = ("NIPA·NXT 수요조사", nipa_demand)
         sources["keit_planning"] = ("KEIT 과제기획", keit_planning)
         sources["komeri"] = ("한국조선해양기자재연구원", komeri)
+        # Event sources are added to the schedule when they answer; one that does not answer
+        # leaves its events out of this run instead of stopping the whole collection.
+        sources["kmi_event"] = ("KMI 세미나", optional(kmi_events))
+        sources["bexco"] = ("BEXCO 행사일정", optional(bexco_events))
+        sources["institution_event"] = ("해양수산 기관 공지", optional(institution_events))
+        sources["naver_event"] = ("언론 보도(일정은 원문 확인)", optional(naver_events))
         keys = {name: os.getenv(name, "").strip() for name in API_KEYS}
         missing = [name for name in ("KSTARTUP_API_KEY", "BIZINFO_API_KEY") if not keys[name]]
         if missing and os.getenv("GITHUB_ACTIONS") == "true":
@@ -1393,6 +1992,13 @@ def build(samples):
         del records[key]
     for entry in records.values():
         classify_information(entry)
+    # Events from every source keep to the two groups of the schedule (see event_in_scope).
+    for key in [key for key, entry in records.items()
+                if entry["category"] in ("domestic", "international") and
+                not event_in_scope(entry["title"], entry.get("content_full", "") or entry.get("topic", ""))]:
+        del records[key]
+    drop_event_duplicates(records)
+    for entry in records.values():
         classify_support(entry)
         if entry["category"] in ("support", "rnd"):
             entry["agency"] = agency_name(entry.get("publisher") or SOURCE_AGENCIES.get(entry["source"]) or
@@ -1451,5 +2057,8 @@ if __name__ == "__main__":
         get = reader(None)
         check_naver(get)
         jcia_notices(get, discovery_only=True)
+        # Shows which press-reported events the next collection would list, without publishing.
+        for row in sorted(naver_events(get), key=lambda row: row["event_start"]):
+            print(f'{row["event_start"]} {row.get("event_region", "")} {row["title"]}', flush=True)
     else:
         build(args.samples)
