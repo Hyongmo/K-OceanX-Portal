@@ -867,6 +867,16 @@ def kstartup_ages(value):
     return [] if set(AGE_BANDS) <= bands else [band for band in AGE_BANDS if band in bands]
 
 
+# Notices left out, with the reason and the text that decided it, kept for review (dist/review.json).
+EXCLUDED = []
+
+
+def excluded(source, key, title, reason, target="", content="", official=None):
+    EXCLUDED.append({"id": f"{source}:{key}", "source": source, "title": title, "reason": reason,
+                     "target": (target or "")[:1000], "content": (content or "")[:1000],
+                     **({"official": official} if official else {})})
+
+
 def tally(source, counts, kept):
     dropped = ", ".join(f"{label} {count}" for label, count in sorted(counts.items()))
     print(f"{source}: 포함 {kept}" + (f" / 제외 {dropped}" if dropped else ""), flush=True)
@@ -892,8 +902,12 @@ def kstartup_api(get, key):
             organizer = clean(item.get("pbanc_ntrp_nm"))
             target = clean(item.get("aply_trgt_ctnt"))
             keep, label = judge(title, organizer, clean(item.get("aply_trgt")), target)
+            official = {"지역": clean(item.get("supt_regin")), "업력": clean(item.get("biz_enyy")),
+                        "분류": clean(item.get("supt_biz_clsfc")), "대상": clean(item.get("aply_trgt"))}
             if not keep:
                 dropped[label] = dropped.get(label, 0) + 1
+                excluded("kstartup", number, title, label, target,
+                         f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}", official)
                 continue
             hints = {}
             for name in re.split(r"[,]\s*", clean(item.get("supt_biz_clsfc"))):
@@ -919,7 +933,7 @@ def kstartup_api(get, key):
                                content_full=f"{clean(item.get('pbanc_ctnt'))} {clean(item.get('support_ctnt'))}".strip(),
                                agency_region=agency_region(organizer),
                                ages=kstartup_ages(clean(item.get("biz_enyy"))),
-                               maritime=label == "해양 특화", support_hints=hints))
+                               maritime=label == "해양 특화", support_hints=hints, review_official=official))
         total = int(data.get("totalCount") or 0)
         if not items or page_no * 100 >= total:
             break
@@ -942,8 +956,12 @@ def bizinfo_api(get, key):
             organizer = clean(item.get("jrsdInsttNm"))  # placeholder values name no agency
         target = stated_target(item.get("bsnsSumryCn"))
         keep, label = judge(title, organizer, clean(item.get("trgetNm")), target)
+        official = {"대상": clean(item.get("trgetNm")), "분야": clean(item.get("pldirSportRealmLclasCodeNm")),
+                    "해시태그": clean(item.get("hashtags")), "기간": clean(item.get("reqstBeginEndDe"))}
         if not keep:
             dropped[label] = dropped.get(label, 0) + 1
+            excluded("bizinfo", number, title, label, target or clean(item.get("trgetNm")),
+                     clean(item.get("bsnsSumryCn")), official)
             continue
         opens, deadline, clock = date_range(item.get("reqstBeginEndDe"))
         if deadline and deadline < today:
@@ -967,7 +985,7 @@ def bizinfo_api(get, key):
                            agency_region=agency_region(organizer),
                            planning_stage=(planning_type(title) or "application") if is_rnd else "",
                            place=hints["regions"][0] if len(hints["regions"]) == 1 and hints["regions"][0] != "전국" else "",
-                           maritime=label == "해양 특화", support_hints=hints))
+                           maritime=label == "해양 특화", support_hints=hints, review_official=official))
     tally("bizinfo", dropped, len(rows))
     return rows
 
@@ -1012,8 +1030,10 @@ def bizinfo_events(get, key):
             continue
         organizer = clean(item.get("originEngnNm"))
         keep, label = judge(title, organizer)
+        official = {"지역": clean(item.get("areaNm")), "유형": clean(item.get("eventInfoTyNm"))}
         if not keep:
             dropped[label] = dropped.get(label, 0) + 1
+            excluded("bizinfo_event", number, title, label, "", clean(item.get("nttCn")), official)
             continue
         url = next((value for value in (item.get("bizinfoUrl"), item.get("orginlUrlAdres"))
                     if str(value or "").startswith("https://")), "")
@@ -1030,6 +1050,7 @@ def bizinfo_events(get, key):
             keep, reason = training_scope(title)
             if not keep:
                 dropped[reason] = dropped.get(reason, 0) + 1
+                excluded("bizinfo_event", number, title, reason, "", content, official)
                 continue
             # Who may apply is read from the notice itself, as for other Bizinfo notices: the area
             # field is where the course is held ("서울"), not whom it is for.
@@ -1039,10 +1060,12 @@ def bizinfo_events(get, key):
                                event_start=start, event_end=end, publisher=organizer,
                                topic=shorten(content, 140), content_full=content,
                                agency_region=agency_region(organizer), maritime=label == "해양 특화",
-                               support_hints={"types": ["people"], "methods": ["service"], "regions": regions}))
+                               support_hints={"types": ["people"], "methods": ["service"], "regions": regions},
+                               review_official=official))
             continue
         if not event_in_scope(title, content):
             dropped["해양수산·AI·데이터 밖 행사"] = dropped.get("해양수산·AI·데이터 밖 행사", 0) + 1
+            excluded("bizinfo_event", number, title, "해양수산·AI·데이터 밖 행사", "", content, official)
             continue
         rows.append(record("bizinfo_event", number, title, url,
                            "international" if re.search(r"해외|국외", area) else "domestic",
@@ -2145,16 +2168,29 @@ def build(samples):
                 if entry["category"] in ("support", "rnd") and (
                     NOT_SUPPORT.search(entry["title"]) or
                     other_trades_only(entry.get("target_full") or entry.get("eligibility", "")))]:
-        del records[key]
+        entry = records.pop(key)
+        excluded(entry["source"], key.split(":", 1)[1], entry["title"],
+                 "기업지원 아님" if NOT_SUPPORT.search(entry["title"]) else "다른 업종 한정(신청 대상)",
+                 entry.get("target_full") or entry.get("eligibility", ""), entry.get("content_full", ""),
+                 entry.get("review_official"))
     for entry in records.values():
         classify_information(entry)
     # Events from every source keep to the two groups of the schedule (see event_in_scope).
     for key in [key for key, entry in records.items()
                 if entry["category"] in ("domestic", "international") and
                 not event_in_scope(entry["title"], entry.get("content_full", "") or entry.get("topic", ""))]:
-        del records[key]
+        entry = records.pop(key)
+        excluded(entry["source"], key.split(":", 1)[1], entry["title"], "해양수산·AI·데이터 밖 행사",
+                 "", entry.get("content_full", "") or entry.get("topic", ""), entry.get("review_official"))
     drop_event_duplicates(records)
+    kept = []
     for entry in records.values():
+        kept.append({"id": entry["id"], "source": entry["source"], "title": entry["title"],
+                     "target": (entry.get("target_full") or entry.get("eligibility", ""))[:1000],
+                     "content": (entry.get("content_full") or entry.get("topic", ""))[:1000],
+                     **({"official": entry["review_official"]} if entry.get("review_official") else {}),
+                     **({"hints": entry["support_hints"]} if entry.get("support_hints") else {})})
+        entry.pop("review_official", None)
         classify_support(entry)
         if entry["category"] in ("support", "rnd"):
             entry["agency"] = agency_name(entry.get("publisher") or SOURCE_AGENCIES.get(entry["source"]) or
@@ -2198,6 +2234,11 @@ def build(samples):
     temporary = dist / "data.tmp"
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     temporary.replace(dist / "data.json")
+    # Review material, not shown on the site: what was left out and why, and the text each kept
+    # notice was judged on. Read when checking the rules (judgment_cases.json, test_cases.py).
+    (dist / "review.json").write_text(json.dumps(
+        {"updated_at": updated_at.isoformat(), "excluded": EXCLUDED, "kept": kept}, ensure_ascii=False),
+        encoding="utf-8")
     index = (ROOT / "site/index.html").read_text(encoding="utf-8")
     index = index.replace('src="./portal.js"', f'src="./portal.js?v={updated_at:%Y%m%d%H%M%S%f}"')
     (dist / "index.html").write_text(index, encoding="utf-8")
