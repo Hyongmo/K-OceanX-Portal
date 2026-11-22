@@ -79,9 +79,11 @@ def record(source, key, title, url, category, **fields):
 
 
 def reader(samples):
-    def get(name, url, headers=None):
+    def get(name, url, headers=None, data=None):
         if samples:
             return (samples / f"{name}.body").read_bytes()
+        # Event posters are tall pictures; other answers stay under 8 MB.
+        limit = 30_000_000 if name == "eventus_poster" else 8_000_000
         if name in ("kimst_rnd", "kimst_notice", "jcia", "tp_planning", "biz_planning",
                     "bistep_planning", "nia_planning", "nipa_demand", "keit_planning"):
             # These publishers work with curl on the development host.
@@ -89,13 +91,13 @@ def reader(samples):
                                            "8000000", "--proto", "=https",
                                            "--user-agent", "K-OceanX pilot/0.1", url])
         else:
-            request = Request(url, headers={"User-Agent": "K-OceanX pilot/0.1"})
+            request = Request(url, data=data, headers={"User-Agent": "K-OceanX pilot/0.1"})
             for key, value in (headers or {}).items():
                 request.add_unredirected_header(key, value)
             with urlopen(request, timeout=20) as response:
-                raw = response.read(8_000_001)
-        if len(raw) > 8_000_000:
-            raise ValueError("Response exceeds 8 MB")
+                raw = response.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("Response exceeds the size limit")
         return gzip.decompress(raw) if raw.startswith(b"\x1f\x8b") else raw
     return get
 
@@ -973,14 +975,24 @@ def bizinfo_api(get, key):
 # The event schedule keeps two groups: ocean, fisheries, shipping and port events, and AI and data
 # events. The sea is read from the title and the event text; AI and data from the title only,
 # since event texts mention data and AI in passing ("데이터 기반 마케팅").
+# "해운대" (a Busan district, often in addresses) is not shipping; "TV조선", "헬스조선" and "조선이공대"
+# are not shipbuilding. "선급" is ship classification (한국선급).
 EVENT_MARITIME = re.compile(
-    r"해양|해운|항만|선박|조선(?!일보|대학|대)|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업|(?<!농)어촌|어항|"
+    r"해양|해운(?!대)|항만|선박|선급|해수부|(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공)|(?<!농)(?<!축)(?<!림)수산|"
+    r"(?<!농)어업|(?<!농)어촌|어항|"
     r"스마트\s*양식|육상\s*양식|양식\s*(?:업|장|어|산업|기업|시설|기술)|해상\s*(?:풍력|물류|운송)|해사|크루즈|원양|"
     r"북극\s*항로|maritime|ocean|shipping|aquaculture|seafood|fisher", re.I)
 EVENT_AI = re.compile(r"(?<![A-Za-z])(?:AI|AX)(?![A-Za-z])|인공지능|데이터|생성형|LLM|머신\s*러닝|딥\s*러닝", re.I)
+# Paid courses, marketing and sales events, and job fairs are not events for companies to follow,
+# whatever their topic (user decision 2026-11-22).
+EVENT_COMMERCIAL = re.compile(
+    r"마케팅|광고|쇼핑몰|스마트\s*스토어|상세\s*페이지|쇼츠|유튜브|인스타|틱톡|커머스|세일즈|"
+    r"강의|클래스|수강|부트\s*캠프|자격증|교육생|국비\s*지원|채용|취업|승무원")
 
 
 def event_in_scope(title, content=""):
+    if EVENT_COMMERCIAL.search(title):
+        return False
     return bool(EVENT_MARITIME.search(f"{title} {content}") or EVENT_AI.search(title))
 
 
@@ -1635,6 +1647,10 @@ NEWS_INSTITUTIONS = (
     "해양수산과학기술주간", "세계해양포럼", "해양산업통합클러스터", "부산수산자원연구소", "인천수산자원연구소", "경기도해양수산자원연구소", "강원특별자치도 수산자원연구원", "충남수산자원연구소",
     "전북수산기술연구소", "전남해양수산과학원", "경북어업기술원", "경북수산자원연구원", "경남수산안전기술원", "울산수산자원연구소", "제주해양수산연구원", "코리아씨푸드쇼", "부산국제보트쇼",
     "인천국제해양포럼",
+    # Regional economic and industry agencies that hold company forums with ocean sessions.
+    "부산경제진흥원", "부산정보산업진흥원", "부산상공회의소", "부산산업과학혁신원", "울산경제일자리진흥원",
+    "울산정보산업진흥원", "울산테크노파크", "경남투자경제진흥원", "전남정보문화산업진흥원", "전남테크노파크",
+    "포항테크노파크", "인천테크노파크",
 )
 EVENT_TOPICS = (
     "해양수산 전망대회", "해양수산 세미나 개최", "해양수산 포럼 개최", "해운 세미나 개최", "해운 포럼 개최",
@@ -1658,7 +1674,9 @@ def event_place(sentence):
     for venue in re.finditer(r"에서", sentence):
         window = sentence[max(0, venue.start() - 25):venue.start()]
         found = [(m.start(), CITY_TO_REGION[m[0]]) for m in re.finditer(CITY_NAMES, window)]
-        found += [(m.start(), LONG_REGIONS.get(m[0], m[0])) for m in re.finditer(REGION_NAMES, window)]
+        # A region name inside a word is not that region ("해운대구" is not 대구).
+        found += [(m.start(), LONG_REGIONS.get(m[1], m[1]))
+                  for m in re.finditer(rf"(?<![가-힣])({REGION_NAMES})", window)]
         if found:
             return max(found)[1]
     return ""
@@ -1719,9 +1737,122 @@ def naver_events(get):
     return list(rows.values())
 
 
+# ---------- Events from Event-us, the booking site many regional bodies use ----------
+# Regional agencies often announce an event only on its Event-us booking page, with the programme
+# as a poster picture (제2회 부산 기업 혁신 포럼, 2026-11-23: "조선해양 산업의 AX 전략" only in the poster).
+# From Event-us only ocean and fisheries events are taken; its AI-only events are mostly paid courses
+# and marketing (user decision 2026-11-22). Paid events are left out.
+EVENTUS_API = "https://api.event-us.kr/api/v1/engine/search"
+EVENTUS_TERMS = ("해양", "해운", "항만", "조선", "선박", "수산", "어업", "양식", "해사", "선급", "오션", "마리타임")
+# Regions on the coast, where a forum may hide its ocean programme in the poster.
+EVENTUS_COAST = ("부산/울산/경남", "전라/광주", "제주")
+EVENTUS_TYPES = {"강연/세미나", "학술회의", "정부회의", "기업회의", "컨벤션", "박람회/페어", "데모데이",
+                 "모임/커뮤니티", "워크샵/클리닉"}
+POSTER_WORD = re.compile(r"포럼|세미나|컨퍼런스|콘퍼런스|심포지엄|설명회|워크숍|박람회|엑스포|EXPO|데모데이|"
+                         r"밋업|토론회|학술|비전|전략", re.I)
+
+
+def eventus_search(get, query, filters):
+    rows, number = [], 1
+    while number <= 10:
+        body = json.dumps({"query": query, "page": {"current": number, "size": 100},
+                           "filters": {"all": filters}}).encode()
+        found = json.loads(get("eventus", EVENTUS_API, {"Content-Type": "application/json"}, body))
+        rows += [{key: (value.get("raw") if isinstance(value, dict) else value) for key, value in row.items()}
+                 for row in found["results"]]
+        if number >= found["meta"]["page"]["total_pages"]:
+            break
+        number += 1
+    return rows
+
+
+def poster_text(get, event):
+    """Text read from the pictures of an Event-us page (the programme is often a poster).
+    Empty when the reading tool (tesseract with Korean) is not installed."""
+    if not shutil.which("tesseract"):
+        return ""
+    html = get("eventus_page", event["url"]).decode("utf-8", "replace")
+    pictures = sorted(set(re.findall(
+        r'https://eventusstorage\.blob\.core\.windows\.net/evs/[^"\'\s)\\]+?\.(?:png|jpe?g|webp)', html, re.I)))
+    pictures = [url for url in pictures if f'/{event["subdomain"]}/' in url and
+                not re.search(r"logo|/Cover/|PlatForm", url, re.I)][:4]
+    text = []
+    for url in pictures:
+        picture = get("eventus_poster", url)
+        result = subprocess.run(["tesseract", "stdin", "stdout", "-l", "kor+eng", "--psm", "3"],
+                                input=picture, capture_output=True, timeout=90)
+        text.append(result.stdout.decode("utf-8", "replace"))
+    # The reader takes "AI" for "Al".
+    return re.sub(r"(?<![A-Za-z])Al(?![A-Za-z])", "AI", "\n".join(text))
+
+
+def address_region(address):
+    """The region an address starts with ("부산 해운대구 …" → 부산)."""
+    found = re.match(rf"\s*({REGION_NAMES})(?![가-힣])", address or "")
+    return LONG_REGIONS.get(found[1], found[1]) if found else ""
+
+
+def eventus_events(get):
+    today = kst_today()
+    now = f"{today}T00:00:00Z"
+    later = (date.fromisoformat(today) + timedelta(days=300)).isoformat() + "T23:59:59Z"
+    base = [{"start_date": {"from": f"{(date.fromisoformat(today) - timedelta(days=30)).isoformat()}T00:00:00Z",
+                            "to": later}}, {"close_date": {"from": now}}]
+    found, failed = {}, 0
+    searches = [(term, base) for term in EVENTUS_TERMS] + [("", base + [{"area": list(EVENTUS_COAST)}])]
+    for query, filters in searches:
+        try:
+            for row in eventus_search(get, query, filters):
+                found[row["id"]] = row
+        except (OSError, ValueError, KeyError):
+            failed += 1
+    if failed == len(searches):
+        raise ValueError("Event-us answered none of the searches")
+    events, posters = [], []
+    for row in found.values():
+        title = clean(row.get("title"))
+        start, end = str(row.get("start_date") or "")[:19], str(row.get("close_date") or "")[:19]
+        if not title or row.get("state") != "Start" or row.get("disclosure_status") != "open" or \
+                row.get("is_ignore") == "true" or row.get("event_type") not in EVENTUS_TYPES:
+            continue
+        if (row.get("min_money") or 0) > 0 or row.get("payway") == "true" or EVENT_COMMERCIAL.search(title):
+            continue
+        start, end = (datetime.fromisoformat(value + "+00:00").astimezone(timezone(timedelta(hours=9))).date().isoformat()
+                      if value else "" for value in (start, end))
+        if not upcoming(start, end, today):
+            continue
+        event = {**row, "title": title, "start": start, "end": end,
+                 "url": f'https://event-us.kr/{row["subdomain"]}/event/{row["id"]}',
+                 "text": clean(row.get("description") or "")}
+        if EVENT_MARITIME.search(f'{title} {event["text"]}'):
+            events.append(event)
+        elif row.get("area") in EVENTUS_COAST and POSTER_WORD.search(title):
+            posters.append(event)
+
+    def read(event):
+        try:
+            return event, poster_text(get, event)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return event, ""
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for event, text in pool.map(read, posters):
+            if EVENT_MARITIME.search(text):
+                events.append({**event, "text": f'{event["text"]}\n{text}'.strip()})
+    rows = []
+    for event in events:
+        address = clean(event.get("full_address") or event.get("address") or event.get("area_detail") or "")
+        rows.append(record("eventus", event["id"], event["title"], event["url"], "domestic",
+                           event_start=event["start"], event_end=event["end"] if event["end"] != event["start"] else "",
+                           publisher=clean(event.get("app_title") or ""), place=clean(event.get("place") or ""),
+                           event_region=address_region(address),
+                           event_types=[event["event_type"]], content_full=event["text"][:4000]))
+    print(f"Event-us: {len(found)} listed, {len(posters)} posters read, {len(rows)} events", flush=True)
+    return rows
+
+
 def drop_event_duplicates(records):
     """One event listed by several sources is kept once, from the source that states its dates."""
-    rank = {"kmi_event": 0, "bexco": 1, "institution_event": 2, "naver_event": 9}
+    rank = {"kmi_event": 0, "bexco": 1, "institution_event": 2, "eventus": 3, "naver_event": 9}
     kept = set()
     for key, entry in sorted(((key, entry) for key, entry in records.items()
                               if entry["category"] in ("domestic", "international") and entry.get("event_start")),
@@ -1955,6 +2086,7 @@ def build(samples):
         sources["bexco"] = ("BEXCO 행사일정", optional(bexco_events))
         sources["institution_event"] = ("해양수산 기관 공지", optional(institution_events))
         sources["naver_event"] = ("언론 보도(일정은 원문 확인)", optional(naver_events))
+        sources["eventus"] = ("이벤터스 행사 신청", optional(eventus_events))
         keys = {name: os.getenv(name, "").strip() for name in API_KEYS}
         missing = [name for name in ("KSTARTUP_API_KEY", "BIZINFO_API_KEY") if not keys[name]]
         if missing and os.getenv("GITHUB_ACTIONS") == "true":

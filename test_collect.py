@@ -6,6 +6,7 @@ from unittest.mock import patch
 from ddgs.exceptions import DDGSException
 
 from collect import (
+    address_region, event_in_scope, event_place, eventus_events,
     BOARDS, EVENT_PAGES, board_events, bexco_events, drop_event_duplicates, event_when, kintex_events, kmi_events,
     mabik_events, naver_events, page_event,
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
@@ -706,6 +707,54 @@ class EventCollectionTest(unittest.TestCase):
         }
         drop_event_duplicates(records)
         self.assertEqual(list(records), ["b"])
+
+
+class EventusTest(unittest.TestCase):
+    def found(self, **fields):
+        base = {"id": "1", "subdomain": "host", "title": "", "state": "Start", "disclosure_status": "open",
+                "is_ignore": "false", "event_type": "강연/세미나", "min_money": 0, "payway": "false",
+                "area": "서울/경기/인천", "start_date": "2026-11-27T05:00:00Z", "close_date": "2026-11-27T08:00:00Z",
+                "full_address": "서울 강남구 테헤란로 1", "app_title": "주최 채널", "description": None}
+        return {key: {"raw": value} for key, value in {**base, **fields}.items()}
+
+    def run_with(self, results, poster=""):
+        def get(name, url, headers=None, data=None):
+            if name == "eventus":
+                query = json.loads(data)["query"]
+                rows = [row for row in results if query in ("", "해양")]
+                return json.dumps({"results": rows, "meta": {"page": {"total_pages": 1}}}).encode()
+            raise AssertionError(name)
+        with patch("collect.kst_today", return_value="2026-11-22"), \
+                patch("collect.poster_text", return_value=poster):
+            return eventus_events(get)
+
+    def test_ocean_events_are_kept_and_paid_or_marketing_ones_left_out(self):
+        rows = self.run_with([
+            self.found(id="1", title="기후변화 대응 스마트양식 전환포럼"),
+            self.found(id="2", title="해양 AI 실무 마스터 클래스"),
+            self.found(id="3", title="해양 데이터 컨퍼런스", min_money=30000, payway="true"),
+            self.found(id="4", title="해양문화 축제", event_type="축제"),
+            self.found(id="5", title="AI 마케팅 세미나"),
+        ])
+        self.assertEqual([row["id"] for row in rows], ["eventus:1"])
+        self.assertEqual((rows[0]["url"], rows[0]["event_start"], rows[0]["event_region"]),
+                         ("https://event-us.kr/host/event/1", "2026-11-27", "서울"))
+
+    def test_coastal_forums_are_judged_by_their_poster(self):
+        forum = self.found(id="9", title="제2회 2026 부산 기업 혁신 포럼", area="부산/울산/경남",
+                           full_address="부산 동구 중앙대로214번길 7-8", start_date="2026-11-23T05:00:00Z",
+                           close_date="2026-11-23T08:00:00Z")
+        row, = self.run_with([forum], poster="세션2 조선해양산업의 AX 전략 및 사례")
+        self.assertEqual((row["title"], row["event_region"]), ("제2회 2026 부산 기업 혁신 포럼", "부산"))
+        self.assertEqual(self.run_with([forum], poster="ESG 경영 사례"), [])
+
+    def test_scope_words_skip_places_and_media_names(self):
+        self.assertFalse(event_in_scope("해운대 문화 세미나"))
+        self.assertFalse(event_in_scope("TV조선 경제아카데미"))
+        self.assertTrue(event_in_scope("한국선급 친환경기술 컨퍼런스"))
+        self.assertFalse(event_in_scope("2026년 AI 기반 글로벌 마케팅 혁신 세미나"))
+        self.assertEqual((address_region("부산 해운대구 센텀중앙로 55"), event_place("부산 해운대구 벡스코에서")),
+                         ("부산", "부산"))
 
 
 class RegionReadingTest(unittest.TestCase):
