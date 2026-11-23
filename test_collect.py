@@ -8,7 +8,7 @@ from ddgs.exceptions import DDGSException
 from collect import (
     address_region, event_in_scope, event_place, eventus_events,
     BOARDS, EVENT_PAGES, board_events, bexco_events, drop_event_duplicates, event_when, kintex_events, kmi_events,
-    mabik_events, naver_events, page_event,
+    mabik_events, press_events, manual_events, carried_press_events, page_event,
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
     agency_name, agency_region, agency_registry, city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
@@ -664,23 +664,55 @@ class EventCollectionTest(unittest.TestCase):
                          [("부산데이터위크 2026", "2026-12-01", "2026-12-02"),
                           ("2027 국제조선해양산업전", "2027-10-20", "2027-10-23")])
 
-    def test_press_reports_become_dated_events_once(self):
-        item = {"title": "8일 부경대서 &apos;2026 대한민국 해양수산 대포럼&apos;",
-                "description": "국립부경대학교는 오는 8일 오후 2시 부경컨벤션홀에서 '2026 대한민국 해양수산 대포럼'을 개최한다고 6일 밝혔다.",
-                "link": "https://n.news.naver.com/mnews/article/014/1", "originallink": "https://www.fnnews.com/1",
-                "pubDate": "Mon, 06 Jul 2026 10:10:00 +0900"}
-        copy = dict(item, link="https://n.news.naver.com/mnews/article/001/2")
-        held = dict(item, title="해양수산 포럼 성료", link="https://n.news.naver.com/mnews/article/001/3")
+    def test_trade_paper_articles_become_dated_events_once(self):
+        def item(title, description, link):
+            return (f"<item><title>{title}</title><link>{link}</link><description>{description}</description>"
+                    "<pubDate>2026-07-06 10:10:00</pubDate></item>")
+        lead = "국립부경대학교는 오는 8일 오후 2시 부경컨벤션홀에서 &apos;2026 대한민국 해양수산 대포럼&apos;을 개최한다고 6일 밝혔다."
+        feed = ("<rss><channel>" + item("8일 부경대서 &apos;2026 대한민국 해양수산 대포럼&apos;", lead, "https://www.haesanews.com/1")
+                + item("부경대, &apos;2026 대한민국 해양수산 대포럼&apos; 8일 개최", lead, "https://www.haesanews.com/2")
+                + item("해양수산 포럼 성료", lead, "https://www.haesanews.com/3")
+                + item("VLCC 운임 급락세", "운임이 내렸다.", "https://www.haesanews.com/4") + "</channel></rss>")
         def get(name, url, headers=None):
-            if name == "naver":
-                return json.dumps({"items": [item, copy, held]}).encode()
-            return "<html><body><div id='dic_area'>부경컨벤션홀에서 열린다.</div></body></html>".encode()
-        with patch.dict("os.environ", {"NAVER_CLIENT_ID": "a", "NAVER_CLIENT_SECRET": "b"}), \
-                patch("collect.kst_today", return_value="2026-07-06"):
-            row, = naver_events(get)
-        self.assertEqual((row["title"], row["event_start"], row["category"], row["url"]),
-                         ("2026 대한민국 해양수산 대포럼", "2026-07-08", "domestic",
-                          "https://n.news.naver.com/mnews/article/014/1"))
+            if name == "press_feed":
+                return feed.encode() if "haesanews" in url and url.startswith("https") else b""
+            return "<html><body><div id='article-view-content-div'>부경컨벤션홀에서 열린다.</div></body></html>".encode()
+        with patch("collect.kst_today", return_value="2026-07-06"):
+            row, = press_events(get)
+        self.assertEqual((row["title"], row["event_start"], row["category"], row["publisher"]),
+                         ("2026 대한민국 해양수산 대포럼", "2026-07-08", "domestic", "해사신문"))
+
+    def test_logistics_events_count_when_their_host_or_programme_is_about_the_sea(self):
+        nelt = ("한국해양수산개발원(KMI, 원장 조정희) 미래물류기술포럼(NeLT)은 오는 27일 오후 1시 서울 양재 엘타워에서 "
+                "'2026 미래물류기술포럼 종합세미나'를 개최한다.")
+        self.assertTrue(event_in_scope("2026 미래물류기술포럼 종합세미나", nelt, title_only=True))
+        self.assertTrue(event_in_scope("스마트 물류 세미나", "물류신문은 12월 2일 세미나를 개최한다.\n주제발표: 항만 자동화 사례",
+                                       title_only=True))
+        self.assertFalse(event_in_scope("2026 물류상생 Meet-up", "국토교통부는 13일 서울창업허브에서 물류상생 밋업을 연다.",
+                                        title_only=True))
+        self.assertFalse(event_in_scope("택배 물류 안전 세미나", "한국통합물류협회는 12월 3일 세미나를 개최한다. "
+                                        "행사장은 바다가 보이는 호텔이다.", title_only=True))
+
+    def test_trade_paper_events_stay_until_they_are_held(self):
+        published = {"records": [
+            {"id": "press_event:a", "source": "press_event", "category": "domestic", "title": "2026 미래물류기술포럼 종합세미나",
+             "url": "https://www.haesanews.com/1", "event_start": "2026-11-27"},
+            {"id": "press_event:b", "source": "press_event", "category": "domestic", "title": "지난 세미나",
+             "url": "https://www.haesanews.com/2", "event_start": "2026-11-20"},
+            {"id": "kmi_event:c", "source": "kmi_event", "category": "domestic", "title": "KMI 세미나",
+             "url": "https://www.kmi.re.kr/", "event_start": "2026-12-01"}]}
+        with patch("collect.published_data", return_value=published):
+            rows = carried_press_events("2026-11-23")
+        self.assertEqual([row["id"] for row in rows], ["press_event:a"])
+
+    def test_hand_listed_events_are_listed_until_they_end(self):
+        listed = {"events": [{"title": "Sea AI 포럼", "start": "2026-11-24", "host": "한국해양수산개발원"},
+                             {"title": "지난 포럼", "start": "2026-10-01"}, {"title": "", "start": "2026-12-01"}]}
+        with patch("collect.MANUAL_EVENTS") as path, patch("collect.kst_today", return_value="2026-11-23"):
+            path.read_text.return_value = json.dumps(listed)
+            row, = manual_events()
+        self.assertEqual((row["title"], row["event_start"], row["source"], row["publisher"], row["url"]),
+                         ("Sea AI 포럼", "2026-11-24", "manual_event", "한국해양수산개발원", ""))
 
     def test_boards_read_event_notices_and_their_date_lines(self):
         board = next(item for item in BOARDS if item["key"] == "ksoe")
@@ -735,7 +767,7 @@ class EventCollectionTest(unittest.TestCase):
         records = {
             "a": {"source": "bizinfo_event", "category": "domestic", "title": "[부산] 부산데이터위크 2026", "event_start": "2026-12-01"},
             "b": {"source": "bexco", "category": "domestic", "title": "부산데이터위크 2026", "event_start": "2026-12-01"},
-            "c": {"source": "naver_event", "category": "domestic", "title": "2026 부산데이터위크", "event_start": "2026-12-01"},
+            "c": {"source": "press_event", "category": "domestic", "title": "2026 부산데이터위크", "event_start": "2026-12-01"},
         }
         drop_event_duplicates(records)
         self.assertEqual(list(records), ["b"])
@@ -798,6 +830,10 @@ class EventusTest(unittest.TestCase):
         self.assertFalse(event_in_scope("TV조선 경제아카데미"))
         self.assertTrue(event_in_scope("한국선급 친환경기술 컨퍼런스"))
         self.assertFalse(event_in_scope("2026년 AI 기반 글로벌 마케팅 혁신 세미나"))
+        self.assertFalse(event_in_scope("일광 노르웨이숲 오션포레 입주박람회"))
+        self.assertFalse(event_in_scope("기업 세미나", "오후 2시 오션스위츠 제주호텔에서"))
+        self.assertTrue(event_in_scope("협력사 간담회", "삼성중공업 또는 한화오션과 하도급 계약 기업"))
+        self.assertTrue(event_in_scope("2026 오션테크 포럼"))
         self.assertEqual((address_region("부산 해운대구 센텀중앙로 55"), event_place("부산 해운대구 벡스코에서")),
                          ("부산", "부산"))
 

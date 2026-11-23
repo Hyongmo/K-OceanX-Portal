@@ -19,7 +19,7 @@ from target_rules import SEA
 
 REQUIRE_ALL = True
 CASES = json.loads((Path(__file__).resolve().parent / "judgment_cases.json").read_text(encoding="utf-8"))
-EVENT_SOURCES = {"eventus", "naver_event", "bexco", "institution_event", "kmi_event"}
+EVENT_SOURCES = {"eventus", "naver_event", "press_event", "bexco", "institution_event", "kmi_event"}
 
 
 def judgment(case):
@@ -32,7 +32,7 @@ def judgment(case):
         if source == "eventus":
             keep = bool(SEA.search(f"{title} {content}")) and not judging.EVENT_COMMERCIAL.search(title)
         else:
-            keep = judging.event_in_scope(title, f"{target} {content}", title_only=source == "naver_event")
+            keep = judging.event_in_scope(title, f"{target} {content}", title_only=source in ("naver_event", "press_event"))
         got = {"kind": "event", "keep": keep}
         if case.get("published"):
             got["event_start"], got["event_end"] = collect.event_when(content, date.fromisoformat(case["published"]))

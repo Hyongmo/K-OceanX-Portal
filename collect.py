@@ -16,6 +16,7 @@ import sys
 import unicodedata
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 from ddgs import DDGS
@@ -798,13 +799,34 @@ def agency_registry(records, previous, today):
     return dict(sorted(registry.items()))
 
 
+_PUBLISHED = []
+
+
+def published_data():
+    """The currently published data, read once per collection; {} when it cannot be read."""
+    if not _PUBLISHED:
+        try:
+            with urlopen(Request(PUBLISHED_DATA, headers={"User-Agent": "K-OceanX pilot/0.1"}), timeout=20) as response:
+                _PUBLISHED.append(json.loads(response.read(16_000_000)))
+        except Exception as error:  # the registry and carried events then start from this collection
+            print(f"Published data unavailable: {type(error).__name__}", file=sys.stderr)
+            _PUBLISHED.append({})
+    return _PUBLISHED[0]
+
+
+def carried_press_events(today):
+    """Trade paper events found by an earlier collection that have not ended. A paper's feed keeps
+    only its last few days of articles, so an event announced ten days ahead would otherwise drop
+    out of the schedule before it is held (2026 미래물류기술포럼, reported 11.18 for 11.27)."""
+    return [row for row in published_data().get("records", ())
+            if row.get("source") == "press_event" and row.get("category") == "domestic" and
+            upcoming(row.get("event_start", ""), row.get("event_end", ""), today, days=400)]
+
+
 def published_agencies():
     """The agency list of the currently published data, or {} when it cannot be read."""
-    try:
-        with urlopen(Request(PUBLISHED_DATA, headers={"User-Agent": "K-OceanX pilot/0.1"}), timeout=20) as response:
-            published = json.loads(response.read(16_000_000))
-    except Exception as error:  # the registry then starts from this collection
-        print(f"Published agency list unavailable: {type(error).__name__}", file=sys.stderr)
+    published = published_data()
+    if not published:
         return {}
     if published.get("agencies"):
         return published["agencies"]
@@ -1644,36 +1666,6 @@ def institution_events(get):
 # port, shipbuilding and fisheries associations, societies, universities, regional support centres,
 # exhibition organisers), less those that rarely hold events for companies. Their own boards are often
 # closed to collection from abroad, so press reports naming them are searched instead.
-NEWS_INSTITUTIONS = (
-    "해양수산부", "국립수산물품질관리원", "국립해양조사원", "국립해양측위정보원", "해양수산인재개발원", "부산지방해양수산청", "인천지방해양수산청", "여수지방해양수산청", "마산지방해양수산청",
-    "동해지방해양수산청", "군산지방해양수산청", "목포지방해양수산청", "포항지방해양수산청", "평택지방해양수산청", "울산지방해양수산청", "대산지방해양수산청", "중앙해양안전심판원",
-    "국립수산과학원", "해양환경공단", "한국해양교통안전공단", "국립해양박물관", "국립해양과학관", "해양수산과학기술진흥원", "한국해양과학기술원", "국립해양생물자원관", "한국해양조사협회",
-    "한국수산자원공단", "한국어촌어항공단", "한국해양진흥공사", "한국해양수산연수원", "부산항만공사", "인천항만공사", "여수광양항만공사", "울산항만공사", "한국항로표지기술원",
-    "한국해양수산개발원", "선박해양플랜트연구소", "극지연구소", "한국조선해양기자재연구원", "한국선급", "한국해사문제연구소", "한국해양전략연구소", "한국해사위험물검사원", "한국해양재단",
-    "해양과학기술 산학연 협력센터", "한국해운협회", "대한민국해양연맹", "한국항만물류협회", "목포해양대학교", "한국도선사협회", "한국선박관리산업협회", "한국선주상호보험조합",
-    "한국예선업협동조합", "한국해기사협회", "한국해양대학교", "한국해운조합", "한국해운세제학회", "한국해운중개업협회", "부산항만산업협회", "한국검수검정협회", "한국국제물류협회",
-    "한국국제해운대리점협회", "한국선원복지고용센터", "한국항만협회", "한국항해항만학회", "한국해법학회", "한국해사법학회", "한국해사재단", "한국해사포럼", "한국해양교육연구회",
-    "한국해양구조협회", "한국해양수산기업협회", "한국해운대리점협회", "한국해운물류학회", "해양환경안전학회", "수협중앙회", "부산공동어시장", "한국수산업경영인중앙연합회", "한국수산회",
-    "한국원양산업협회", "한국수산무역협회", "한국수산종자산업협회", "한국농수산식품유통공사", "한국수산기자재협회", "한국수산과학총연합회", "한국수산물유통가공협회", "전국근해어업인연합회",
-    "한국김산업연합회", "한국수산경영학회", "한국수산과학회", "한국수산해양기술학회", "한국어류학회", "한국어병학회", "한국패류학회", "부경대학교", "군산대학교", "제주대학교",
-    "한국농수산대학교", "한국조선해양플랜트협회", "한국조선해양기자재공업협동조합", "중소조선연구원", "한국해양산업협회", "한국해양과학기술협의회", "대한조선학회", "한국해안·해양공학회",
-    "한국해양공학회", "한국해양학회", "한국해양환경·에너지학회", "한국항만경제학회", "경상국립대학교 해양과학대학", "전남대학교 수산해양대학", "한국수상레저안전협회", "한국해양레저산업협회",
-    "한국풍력산업협회", "부산테크노파크", "제주테크노파크", "환동해산업연구원", "강릉과학산업진흥원", "전남 해양수산 창업투자지원센터", "충남테크노파크", "전북바이오융합산업진흥원",
-    "경남테크노파크", "경남항노화연구원", "BEXCO", "부산항국제전시컨벤션센터", "COEX", "KINTEX", "코마린", "국제해양플랜트전", "부산국제수산엑스포", "경기국제보트쇼",
-    "해양수산과학기술주간", "세계해양포럼", "해양산업통합클러스터", "부산수산자원연구소", "인천수산자원연구소", "경기도해양수산자원연구소", "강원특별자치도 수산자원연구원", "충남수산자원연구소",
-    "전북수산기술연구소", "전남해양수산과학원", "경북어업기술원", "경북수산자원연구원", "경남수산안전기술원", "울산수산자원연구소", "제주해양수산연구원", "코리아씨푸드쇼", "부산국제보트쇼",
-    "인천국제해양포럼",
-    # Regional economic and industry agencies that hold company forums with ocean sessions.
-    "부산경제진흥원", "부산정보산업진흥원", "부산상공회의소", "부산산업과학혁신원", "울산경제일자리진흥원",
-    "울산정보산업진흥원", "울산테크노파크", "경남투자경제진흥원", "전남정보문화산업진흥원", "전남테크노파크",
-    "포항테크노파크", "인천테크노파크",
-)
-EVENT_TOPICS = (
-    "해양수산 전망대회", "해양수산 세미나 개최", "해양수산 포럼 개최", "해운 세미나 개최", "해운 포럼 개최",
-    "항만 세미나 개최", "항만 포럼 개최", "조선해양 포럼 개최", "조선해양 세미나 개최", "수산 포럼 개최",
-    "수산 세미나 개최", "해양 심포지엄 개최", "해양 컨퍼런스 개최", "해양산업 박람회", "해양 AI 세미나",
-    "해양 데이터 포럼", "스마트항만 세미나", "자율운항선박 포럼", "스마트양식 세미나", "조선 AI 세미나",
-)
 QUOTED = re.compile(r"[‘'“\"「『<〈《]([^’'”\"」』>〉》]{4,60})[’'”\"」』>〉》]")
 
 
@@ -1698,59 +1690,112 @@ def event_place(sentence):
     return ""
 
 
-def naver_events(get):
-    headers = naver_headers()
-    if not headers:
-        print("Naver keys missing; press reports skipped", file=sys.stderr)
-        return []
+# Ocean trade papers publish their articles as RSS feeds; an article that announces an event
+# ("…, 27일 미래물류기술포럼 개최") is read like a press report. They replace Naver News for events:
+# the Naver search API may only show its own results as they come (terms of 2026-09-07; user
+# decision 2026-11-23).
+PRESS_FEEDS = (
+    ("한국해운신문", ("https://www.maritimepress.co.kr/rss/allArticle.xml",)),
+    ("해양한국", ("https://www.monthlymaritimekorea.com/rss/allArticle.xml",)),
+    ("쉬핑뉴스넷", ("https://www.shippingnewsnet.com/rss/allArticle.xml",)),
+    ("현대해양", ("https://www.hdhy.co.kr/rss/allArticle.xml",)),
+    # These two answer over http when their certificate fails.
+    ("해사신문", ("https://www.haesanews.com/rss/allArticle.xml", "http://www.haesanews.com/rss/allArticle.xml")),
+    ("한국수산경제", ("https://www.fisheco.com/rss/allArticle.xml", "http://www.fisheco.com/rss/allArticle.xml")),
+    ("카고뉴스", ("https://www.cargonews.co.kr/rss/allArticle.xml",)),
+)
+
+
+def feed_date(value):
+    """An RSS item's date: RFC 822 ("Wed, 18 Nov 2026 08:27:00 +0900") or "2026-11-18 08:27:00"."""
+    value = (value or "").strip()
+    try:
+        return parsedate_to_datetime(value).date()
+    except (TypeError, ValueError):
+        found = re.match(r"(20\d{2})-(\d{2})-(\d{2})", value)
+        return date(int(found[1]), int(found[2]), int(found[3])) if found else None
+
+
+def press_events(get):
     today = kst_today()
-    candidates = {}
-    queries = (*[f"{name} 개최" for name in NEWS_INSTITUTIONS], *EVENT_TOPICS)
-    answered = 0
-    for query in queries:
-        url = params("https://openapi.naver.com/v1/search/news.json", query=query, display=30, sort="date")
-        try:
-            items = json.loads(get("naver", url, headers))["items"]
-        except (OSError, ValueError, KeyError):
-            continue
-        answered += 1
-        for item in items:
-            title, summary = clean(item.get("title")), clean(item.get("description"))
-            if not EVENT_WORD.search(title) or EVENT_DONE.search(title):
+    candidates, answered = {}, 0
+    for paper, urls in PRESS_FEEDS:
+        for url in urls:
+            try:
+                root = ElementTree.fromstring(get("press_feed", url))
+            except (OSError, ValueError, ElementTree.ParseError):
                 continue
-            posted = parsedate_to_datetime(item["pubDate"]).date()
-            if (date.fromisoformat(today) - posted).days > 45 or not event_in_scope(title, summary, title_only=True):
-                continue
-            # The Naver copy is preferred: it is always https and keeps one layout.
-            link = next((value for value in (item.get("link"), item.get("originallink"))
-                         if str(value or "").startswith("https://")), "")
-            if link:
-                candidates.setdefault(link, (title, summary, posted))
+            answered += 1
+            for item in root.iter("item"):
+                title, summary = clean(item.findtext("title")), clean(item.findtext("description"))
+                link, posted = (item.findtext("link") or "").strip(), feed_date(item.findtext("pubDate"))
+                if not (title and link and posted) or not EVENT_WORD.search(title) or EVENT_DONE.search(title):
+                    continue
+                if (date.fromisoformat(today) - posted).days > 45 or EVENT_COMMERCIAL.search(title):
+                    continue
+                candidates.setdefault(link, (title, summary, posted, paper))
+            break
     if not answered:
-        raise ValueError("Naver News answered none of the event searches")
+        raise ValueError("No trade paper feed answered")
+    return press_rows(get, candidates, today)
+
+
+def press_rows(get, candidates, today):
+    """Events from press articles: the article is read for the date and place; one event reported
+    by several papers is listed once."""
     rows = {}
-    for link, (title, summary, posted) in list(candidates.items())[:200]:
+    for link, (title, summary, posted, paper) in list(candidates.items())[:200]:
         text = f"{title}\n{summary}"
         try:
-            text += "\n" + notice_text(page(get, "naver_article", link))
+            text += "\n" + notice_text(page(get, "press_article", link))
         except PLANNING_HTTP:
             pass
+        if not event_in_scope(title, text, title_only=True):
+            continue
         start, end = event_when(text, posted)
         if not upcoming(start, end, today):
             continue
         name = event_name(title)
-        # One event reported by several papers is listed once.
         key = re.sub(r"\W|20\d{2}년?|제\s*\d+\s*회", "", name)[:40] + start
         if key in rows:
             continue
         sentence = next((part for part in re.split(SENTENCE_END, text)
                          if EVENT_VERB.search(part) and ANY_DAY.search(part)), "")
-        rows[key] = record("naver_event", hashlib.sha1(key.encode()).hexdigest()[:12], name, link, "domestic",
-                           event_start=start, event_end=end, published=posted.isoformat(),
+        # A paper that hands out http links is linked over https; the site moves the reader on.
+        shown = re.sub(r"^http://", "https://", link)
+        rows[key] = record("press_event", hashlib.sha1(key.encode()).hexdigest()[:12], name, shown, "domestic",
+                           event_start=start, event_end=end, published=posted.isoformat(), publisher=paper,
                            event_region=event_place(sentence), topic=shorten(summary, 140),
                            content_full=text[:4000])
-    print(f"press reports: {len(candidates)} candidates, {len(rows)} events", flush=True)
+    print(f"trade paper events: {len(candidates)} candidates, {len(rows)} events", flush=True)
     return list(rows.values())
+
+
+# Events the center knows of before any notice is published (Sea AI 포럼, 2026-11-24): listed by
+# hand in manual_events.json at the user's request (user decision 2026-11-23).
+MANUAL_EVENTS = Path(__file__).with_name("manual_events.json")
+
+
+def manual_events(get=None):
+    try:
+        listed = json.loads(MANUAL_EVENTS.read_text(encoding="utf-8")).get("events", [])
+    except FileNotFoundError:
+        return []
+    today, rows = kst_today(), []
+    for event in listed:
+        start, end = event.get("start", ""), event.get("end", "")
+        if not (event.get("title") and start) or not upcoming(start, end, today, days=400):
+            continue
+        key = hashlib.sha1(f'{event["title"]}{start}'.encode()).hexdigest()[:12]
+        url = event.get("url", "").strip()
+        row = record("manual_event", key, event["title"], url or "https://www.kmi.re.kr/", "domestic",
+                     event_start=start, event_end=end if end != start else "",
+                     publisher=event.get("host", ""), place=event.get("place", ""),
+                     event_region=event.get("region", ""), maritime=True, content_full=event.get("note", ""))
+        # Without a page of its own the event is listed as plain text, not linked.
+        row["url"] = url
+        rows.append(row)
+    return rows
 
 
 # ---------- Events from Event-us, the booking site many regional bodies use ----------
@@ -1759,7 +1804,7 @@ def naver_events(get):
 # From Event-us only ocean and fisheries events are taken; its AI-only events are mostly paid courses
 # and marketing (user decision 2026-11-22). Paid events are left out.
 EVENTUS_API = "https://api.event-us.kr/api/v1/engine/search"
-EVENTUS_TERMS = ("해양", "해운", "항만", "조선", "선박", "수산", "어업", "양식", "해사", "선급", "오션", "마리타임")
+EVENTUS_TERMS = ("해양", "해운", "항만", "조선", "선박", "수산", "어업", "양식", "해사", "선급", "오션", "마리타임", "물류")
 # Regions on the coast, where a forum may hide its ocean programme in the poster.
 EVENTUS_COAST = ("부산/울산/경남", "전라/광주", "제주")
 EVENTUS_TYPES = {"강연/세미나", "학술회의", "정부회의", "기업회의", "컨벤션", "박람회/페어", "데모데이",
@@ -1845,7 +1890,7 @@ def eventus_events(get):
         event = {**row, "title": title, "start": start, "end": end,
                  "url": f'https://event-us.kr/{row["subdomain"]}/event/{row["id"]}',
                  "text": clean(row.get("description") or "")}
-        if EVENT_MARITIME.search(f'{title} {event["text"]}'):
+        if EVENT_MARITIME.search(f'{title} {event["text"]} {clean(row.get("app_title") or "")}'):
             events.append(event)
         elif row.get("area") in EVENTUS_COAST and POSTER_WORD.search(title):
             posters.append(event)
@@ -2107,7 +2152,8 @@ def build(samples):
         sources["kmi_event"] = ("KMI 세미나", optional(kmi_events))
         sources["bexco"] = ("BEXCO 행사일정", optional(bexco_events))
         sources["institution_event"] = ("해양수산 기관 공지", optional(institution_events))
-        sources["naver_event"] = ("언론 보도(일정은 원문 확인)", optional(naver_events))
+        sources["press_event"] = ("해양 전문지 보도(일정은 원문 확인)", optional(press_events))
+        sources["manual_event"] = ("직접 등록", manual_events)
         sources["eventus"] = ("이벤터스 행사 신청", optional(eventus_events))
         keys = {name: os.getenv(name, "").strip() for name in API_KEYS}
         missing = [name for name in ("KSTARTUP_API_KEY", "BIZINFO_API_KEY") if not keys[name]]
@@ -2149,9 +2195,9 @@ def build(samples):
         classify_information(entry)
     # Events from every source keep to the two groups of the schedule (see event_in_scope).
     for key in [key for key, entry in records.items()
-                if entry["category"] in ("domestic", "international") and
+                if entry["category"] in ("domestic", "international") and entry["source"] != "manual_event" and
                 not event_in_scope(entry["title"], entry.get("content_full", "") or entry.get("topic", ""),
-                                   title_only=entry["source"] == "naver_event")]:
+                                   title_only=entry["source"] in ("naver_event", "press_event"))]:
         entry = records.pop(key)
         excluded(entry["source"], key.split(":", 1)[1], entry["title"], "해양수산·AI·데이터 밖 행사",
                  "", entry.get("content_full", "") or entry.get("topic", ""), entry.get("review_official"))
@@ -2189,6 +2235,10 @@ def build(samples):
                 bands = judging.notice_ages(entry["title"], target, content)
                 if bands:
                     entry["ages"] = bands
+    # Trade paper events stay listed until they are held, after their article leaves the feed.
+    if not samples and "press_event" in sources:
+        for row in carried_press_events(kst_today()):
+            records.setdefault(row["id"], row)
     # One listing per notice and per event, across all sources.
     before = dict(records)
     for key in judging.drop_duplicates(records):
@@ -2232,8 +2282,8 @@ if __name__ == "__main__":
         get = reader(None)
         check_naver(get)
         jcia_notices(get, discovery_only=True)
-        # Shows which press-reported events the next collection would list, without publishing.
-        for row in sorted(naver_events(get), key=lambda row: row["event_start"]):
+        # Shows which trade paper events the next collection would list, without publishing.
+        for row in sorted(press_events(get), key=lambda row: row["event_start"]):
             print(f'{row["event_start"]} {row.get("event_region", "")} {row["title"]}', flush=True)
     else:
         build(args.samples)

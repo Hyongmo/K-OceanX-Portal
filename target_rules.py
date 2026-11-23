@@ -12,12 +12,16 @@ import re
 # Words that only look like sea words are left out where they stand: 해운대 (a Busan district),
 # 개선사업·우선사업 (not 선사), 우수중소기업 (not 수중), 농수산·농축수산·농림수산 (farm programs),
 # TV조선·헬스조선·조선이공대·조선대 and 조선시대 (not shipbuilding).
+# 오션 counts on its own or before a particle (한화오션과); a name running on from it is a brand
+# (오션포레 apartments, 오션스위츠 hotel), except sea compounds such as 오션테크.
+OCEAN = (r"오션(?:(?![가-힣])|(?=(?:과|와|은|는|이|가|을|를|의|에|에서|으로|로|도|및)(?![가-힣]))|"
+         r"(?=\s*(?:테크|데이터|산업|클러스터|위크|플랜트|에너지|모빌리티)))")
 SEA = re.compile(
     r"해양|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업|(?<!농)어촌|어항|어선|양식장|양식어|양식업|양식\s*(?:장|산업|기업|시설|기술)|"
     r"스마트\s*양식|육상\s*양식|해운(?!대)|선박|(?<!개)(?<!우)선사(?!업)|항만|"
     r"(?<!TV)(?<!헬스)조선(?!일보|대학|대|이공|시대|왕조|통신사)|중공업|기자재(?=.*(?:조선|선박))|(?<![가-힣])해사(?:\s*(?:안전|산업|법|클러스터|기술))?|"
     r"크루즈|블루\s*바이오|해상\s*(?:풍력|물류|운송|교통|안전)|원양|해저|(?<!우)수중|극지|북극|남극|쇄빙|선급|해수부|"
-    r"오션|ocean|marine|maritime|shipping|aquaculture|seafood|fisher|arctic|polar",
+    + OCEAN + r"|ocean|marine|maritime|shipping|aquaculture|seafood|fisher|arctic|polar",
     re.I,
 )
 MARITIME = SEA
@@ -178,7 +182,7 @@ INNOVATION = {
     "energy": r"에너지|수소|원자력|원전|핵융합|해상\s*풍력|태양광|이차\s*전지|배터리",
     "advanced_manufacturing": r"첨단\s*제조|스마트\s*(?:공장|제조)|센서|자율\s*제조|(?<![A-Za-z])AI\s*팩토리|3D\s*프린팅|디지털\s*트윈",
 }
-MARITIME_COMMON = re.compile(r"해양|(?<!농)(?<!축)(?<!림)수산|바다|블루\s*(?:이코노미|테크|바이오)|오션|ocean|marine|maritime", re.I)
+MARITIME_COMMON = re.compile(r"해양|(?<!농)(?<!축)(?<!림)수산|바다|블루\s*(?:이코노미|테크|바이오)|" + OCEAN + r"|ocean|marine|maritime", re.I)
 MANUFACTURING = re.compile(r"스마트\s*공장|제조\s*(?:기업|업|혁신|현장|AI|데이터)|공장|뿌리\s*(?:산업|기업)|금형|소공인")
 # A stated target counts as manufacturing only when it asks for manufacturers and
 # names no other kind of business; "본사 또는 공장" only says where a company sits.

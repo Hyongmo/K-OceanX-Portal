@@ -183,21 +183,46 @@ def notice_ages(title, target="", content="", official=""):
 
 EVENT_AI = re.compile(r"(?<![A-Za-z])(?:AI|AX)(?![A-Za-z])|인공지능|데이터|생성형|LLM|머신\s*러닝|딥\s*러닝", re.I)
 # AI events kept are industry and policy gatherings; courses and hands-on sessions are not
-# (user decision 2026-11-22).
+# (user decision 2026-11-22). Housing sales fairs are advertising too (user, 2026-11-22).
 AI_PRACTICE = re.compile(r"실무|교육|강의|강좌|클래스|과정|특강|아카데미|부트\s*캠프|자격|활용법|사용법|실습|따라\s*하기|노하우")
 EVENT_COMMERCIAL = re.compile(
     r"마케팅|광고|쇼핑몰|스마트\s*스토어|상세\s*페이지|쇼츠|유튜브|인스타|틱톡|커머스|세일즈|"
-    r"강의|클래스|수강|부트\s*캠프|자격증|교육생|국비\s*지원|채용|취업|승무원")
+    r"강의|클래스|수강|부트\s*캠프|자격증|교육생|국비\s*지원|채용|취업|승무원|"
+    r"입주\s*박람회|분양|모델\s*하우스|아파트|부동산")
+
+
+# Logistics events count when who holds them or what is presented is about the sea (user decision
+# 2026-11-23: 물류를 넣되 주최·주관·발표 주제를 본다), e.g. KMI's 미래물류기술포럼.
+LOGISTICS = re.compile(r"물류|로지스틱스|공급망|(?<![A-Za-z])(?:SCM|logistics)(?![A-Za-z])", re.I)
+HOST_OR_TOPIC = re.compile(r"(?:공동\s*)?(?:주최|주관|후원)|기조\s*(?:강연|연설)|주제\s*발표|발제|발표|세션|강연|토론|좌장|"
+                           r"프로그램|주제")
+OPENS = re.compile(r"개최|연다|열린다|마련한다|진행한다")
+
+
+def host_and_topics(content):
+    """Who holds the event and what is presented: lines naming 주최·주관·후원 or the programme
+    (기조강연, 발표, 세션, 토론), and in a press report the one who opens it ("○○은 … 개최한다")."""
+    parts = []
+    for line in re.split(r"(?<=다)\.\s*|\n", content or ""):
+        found = HOST_OR_TOPIC.search(line)
+        if found:
+            parts.append(line[found.start():found.start() + 160])
+        if OPENS.search(line):
+            parts.append(re.split(r"(?<=[은는이가])\s", line.strip(), maxsplit=1)[0][:120])
+    return "\n".join(parts)
 
 
 def event_in_scope(title, content="", title_only=False):
-    """Ocean and fisheries events (title, or the event's own text), and AI or data industry and
-    policy events (title). Press reports are judged on their title alone (title_only), since a
-    regional news round-up mentions the sea in passing."""
+    """Ocean and fisheries events (title, or the event's own text), logistics events whose host or
+    programme is about the sea, and AI or data industry and policy events (title). Press reports are
+    judged on their title alone (title_only), since a regional news round-up mentions the sea in
+    passing; for a logistics report its host and programme are read as well."""
     title = title or ""
     if EVENT_COMMERCIAL.search(title):
         return False
     if SEA.search(title if title_only else f"{title} {content or ''}"):
+        return True
+    if LOGISTICS.search(title) and SEA.search(host_and_topics(content)):
         return True
     return bool(EVENT_AI.search(title)) and not AI_PRACTICE.search(title)
 
@@ -246,8 +271,9 @@ def same_notice(a, b):
     return notice_key(a["title"]) == notice_key(b["title"])
 
 
-SOURCE_RANK = {"kmi_event": 0, "bexco": 1, "institution_event": 2, "kstartup": 3, "eventus": 4, "nipa": 4,
-               "kimst_rnd": 4, "kimst_notice": 4, "bizinfo": 6, "bizinfo_event": 7, "naver_event": 9}
+SOURCE_RANK = {"manual_event": -1, "kmi_event": 0, "bexco": 1, "institution_event": 2, "kstartup": 3,
+               "eventus": 4, "nipa": 4, "kimst_rnd": 4, "kimst_notice": 4, "bizinfo": 6, "bizinfo_event": 7,
+               "press_event": 8, "naver_event": 9}
 
 
 def keep_order(entry):
