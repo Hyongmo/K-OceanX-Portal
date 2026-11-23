@@ -2659,6 +2659,57 @@
     "title": "[인천] 서구 2026년 제품인증획득 지원사업 신청 공고",
     "target": "",
     "content": ""
+   },
+   {
+    "id": "bexco:datawk2026",
+    "source": "bexco",
+    "title": "부산데이터위크 2026",
+    "target": "",
+    "content": "",
+    "event_start": "2026-12-01",
+    "event_end": "2026-12-02"
+   },
+   {
+    "id": "institution_event:btp-datawk",
+    "source": "institution_event",
+    "title": "Busan Data Week 2026 개최 및 사전등록 안내",
+    "target": "",
+    "content": "Busan Data Week 2026 개최 및 사전등록 안내 부산 데이터 위크 2026 개최 및 사전등록 안내",
+    "event_start": "2026-12-01"
+   },
+   {
+    "id": "press_event:shipboard-a",
+    "source": "press_event",
+    "title": "국가해양력 강화를 위한 선상 세미나",
+    "target": "",
+    "content": "",
+    "event_start": "2027-05-12",
+    "event_end": "2027-05-14"
+   },
+   {
+    "id": "press_event:shipboard-b",
+    "source": "press_event",
+    "title": "국가해양력 강화를 위한 선상세미나",
+    "target": "",
+    "content": "",
+    "event_start": "2027-05-12",
+    "event_end": "2027-05-14"
+   },
+   {
+    "id": "kmi_event:shipping-outlook-45",
+    "source": "kmi_event",
+    "title": "제45회 KMI 세계해운전망 세미나",
+    "target": "",
+    "content": "",
+    "event_start": "2026-11-25"
+   },
+   {
+    "id": "institution_event:ip-data-forum",
+    "source": "institution_event",
+    "title": "[전국] 2026년 지식재산 데이터 정책포럼 개최 안내",
+    "target": "",
+    "content": "2026년 지식재산 데이터 정책포럼을 개최합니다.",
+    "event_start": "2026-11-25"
    }
   ],
   "pairs": [
@@ -2745,6 +2796,24 @@
     "b": "bizinfo:in2",
     "same": false,
     "why": "새 판단 단계 점검(11.22): 대상 지역이 다른 별개 공고"
+   },
+   {
+    "a": "bexco:datawk2026",
+    "b": "institution_event:btp-datawk",
+    "same": true,
+    "why": "사용자 지적(11.23): 영문 제목 공지의 본문에 '부산 데이터 위크 2026'"
+   },
+   {
+    "a": "press_event:shipboard-a",
+    "b": "press_event:shipboard-b",
+    "same": true,
+    "why": "사용자 지적(11.23): 두 신문이 같은 선상 세미나 보도(기사에서 행사 이름을 읽은 뒤)"
+   },
+   {
+    "a": "kmi_event:shipping-outlook-45",
+    "b": "institution_event:ip-data-forum",
+    "same": false,
+    "why": "같은 날 다른 행사"
    }
   ]
  }

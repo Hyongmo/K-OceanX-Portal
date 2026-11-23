@@ -255,6 +255,13 @@ def event_core(title):
     return (found[0] if found else text).replace(" ", "")
 
 
+def named_in(core, entry):
+    """True when an event's name (five letters or more, spaces left out) appears in another listing's
+    title or text: "부산데이터위크" in a notice titled "Busan Data Week 2026 …" whose text says
+    "부산 데이터 위크 2026"."""
+    return len(core) >= 5 and core in re.sub(r"\s+", "", f'{entry.get("title", "")} {entry.get("_text", "")}')
+
+
 def same_notice(a, b):
     """True when two listings are one notice (support) or one event."""
     if a.get("category") in ("domestic", "international") or b.get("category") in ("domestic", "international"):
@@ -264,7 +271,8 @@ def same_notice(a, b):
         if a["event_start"] > b_end or b["event_start"] > a_end:
             return False
         one, two = event_core(a["title"]), event_core(b["title"])
-        return one == two or SequenceMatcher(None, one, two).ratio() >= 0.75
+        return one == two or SequenceMatcher(None, one, two).ratio() >= 0.75 or \
+            named_in(one, b) or named_in(two, a)
     regions_a, regions_b = a.get("regions"), b.get("regions")
     if regions_a and regions_b and set(regions_a) != set(regions_b):
         return False

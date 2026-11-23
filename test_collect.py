@@ -8,7 +8,7 @@ from ddgs.exceptions import DDGSException
 from collect import (
     address_region, event_in_scope, event_place, eventus_events,
     BOARDS, EVENT_PAGES, board_events, bexco_events, drop_event_duplicates, event_when, kintex_events, kmi_events,
-    mabik_events, press_events, manual_events, carried_press_events, page_event,
+    mabik_events, press_events, manual_events, carried_press_events, event_name, page_event,
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
     agency_name, agency_region, agency_registry, city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
     pohang_support, record,
@@ -704,6 +704,21 @@ class EventCollectionTest(unittest.TestCase):
         with patch("collect.published_data", return_value=published):
             rows = carried_press_events("2026-11-23")
         self.assertEqual([row["id"] for row in rows], ["press_event:a"])
+
+    def test_press_events_take_the_event_name_from_the_article(self):
+        cases = [
+            ("해수부, 항만 시설 기술기준 개발 공청회 개최",
+             "해양수산부가 11월 27일 삼경교육센터에서 ‘항만시설 기술기준 등 개발 공청회’를 개최한다. 이번 공청회는",
+             "항만시설 기술기준 등 개발 공청회"),
+            ("해양연맹, 선상세미나 참가자 모집",
+             "해양연맹은 내년 5월 12일부터 화동명주9호에서 ‘국가해양력 강화를 위한 선상 세미나’를 개최한다.",
+             "국가해양력 강화를 위한 선상 세미나"),
+            ("해양연맹, 선상세미나 개최 안내", "◦ 행 사 명 : 국가해양력 강화를 위한 선상 세미나(항해체험)◦ 일 시 : 2027년",
+             "국가해양력 강화를 위한 선상 세미나"),
+            ("부산시, 해양 데이터 포럼 개최", "부산시는 오는 3일 포럼을 연다.", "해양 데이터 포럼"),
+            ("2026 북극협력주간", "", "2026 북극협력주간")]
+        for title, text, name in cases:
+            self.assertEqual(event_name(title, text), name)
 
     def test_hand_listed_events_are_listed_until_they_end(self):
         listed = {"events": [{"title": "Sea AI 포럼", "start": "2026-11-24", "host": "한국해양수산개발원"},

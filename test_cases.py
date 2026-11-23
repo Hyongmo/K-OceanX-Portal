@@ -47,7 +47,8 @@ def judgment(case):
 def same_notice(a, b):
     """Whether the judging step lists two notices once."""
     category = lambda row: "domestic" if row["source"] in EVENT_SOURCES else "support"
-    return judging.same_notice({**a, "category": category(a)}, {**b, "category": category(b)})
+    row = lambda item: {**item, "category": category(item), "_text": item.get("content", "")}
+    return judging.same_notice(row(a), row(b))
 
 
 def score():

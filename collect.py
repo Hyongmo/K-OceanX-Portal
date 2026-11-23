@@ -1669,12 +1669,32 @@ def institution_events(get):
 QUOTED = re.compile(r"[‘'“\"「『<〈《]([^’'”\"」』>〉》]{4,60})[’'”\"」』>〉》]")
 
 
-def event_name(title):
-    """The event's own name when a headline quotes it ("…, '2027 해양수산 전망대회' 개최")."""
+# A headline that reports an event rather than naming it: "해수부, … 공청회 개최", "…세미나 참가자 모집".
+REPORTER = re.compile(r"^[^,…·]{1,25}[,…]\s*")
+ANNOUNCED = re.compile(r"\s*(?:개최|연다|열린다|열려|개막|참가자?\s*모집|참가\s*신청|사전\s*등록|안내)\s*$")
+NAME_LINE = re.compile(r"행\s*사\s*명\s*[:：]\s*([^\n◦■□○●▶※]{4,80})")
+
+
+def event_name(title, text=""):
+    """The event's own name. A quoted name in the headline ("…, '2027 해양수산 전망대회' 개최"); a
+    headline that already is a name; the article's 행사명 line; a quoted name in the sentence that
+    opens the event ("‘항만시설 기술기준 등 개발 공청회’를 개최한다"); else the headline without its
+    reporter and verb ("해수부, 항만 시설 기술기준 개발 공청회 개최" → "항만 시설 기술기준 개발 공청회")."""
     for name in QUOTED.findall(title):
         if EVENT_WORD.search(name):
             return name.strip()
-    return title
+    if not REPORTER.search(title) and not ANNOUNCED.search(title):
+        return title
+    found = NAME_LINE.search(text or "")
+    if found and EVENT_WORD.search(found[1]):
+        return re.sub(r"\s*\([^)]*\)\s*$", "", found[1]).strip()
+    for sentence in re.split(SENTENCE_END, text or ""):
+        if EVENT_VERB.search(sentence):
+            for name in QUOTED.findall(sentence):
+                if EVENT_WORD.search(name):
+                    return name.strip()
+    bare = ANNOUNCED.sub("", REPORTER.sub("", title)).strip()
+    return bare if EVENT_WORD.search(bare) else title
 
 
 def event_place(sentence):
@@ -1755,7 +1775,7 @@ def press_rows(get, candidates, today):
         start, end = event_when(text, posted)
         if not upcoming(start, end, today):
             continue
-        name = event_name(title)
+        name = event_name(title, text)
         key = re.sub(r"\W|20\d{2}년?|제\s*\d+\s*회", "", name)[:40] + start
         if key in rows:
             continue
@@ -2221,6 +2241,9 @@ def build(samples):
         target = entry.pop("target_full", "") or entry.get("eligibility", "")
         content = entry.pop("content_full", "")
         if entry["category"] in ("domestic", "international"):
+            # Kept only while events are matched across sources (judging.named_in), not published.
+            entry["_text"] = content[:3000]
+        if entry["category"] in ("domestic", "international"):
             # The site marks ocean events with the same sea words the judging step uses.
             if SEA.search(f'{entry["title"]} {content or entry.get("topic", "")}'):
                 entry["maritime"] = True
@@ -2245,6 +2268,8 @@ def build(samples):
         entry = before[key]
         excluded(entry["source"], key.split(":", 1)[1], entry["title"], "같은 공고(다른 수집처와 중복)")
     merge_exhibitions(records)
+    for entry in records.values():
+        entry.pop("_text", None)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     for name in ("portal.css", "portal.js"):
