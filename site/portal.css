@@ -22,7 +22,7 @@ a:hover { color: var(--navy); }
 /* Header */
 .site-header { border-bottom: 1px solid var(--line); }
 .header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 2.25rem; padding: 1rem 0; }
-.brand-oceanx { display: inline-flex; align-items: center; gap: .6rem; text-decoration: none; }
+.brand-oceanx { display: inline-flex; align-items: center; gap: .6rem; margin-left: auto; text-decoration: none; }
 /* Show only the symbol, the left 420 of the 900-pixel official lockup. */
 .brand-symbol { display: block; height: 42px; aspect-ratio: 420 / 241; overflow: hidden; }
 .brand-symbol img { display: block; height: 100%; width: auto; max-width: none; }
@@ -31,8 +31,8 @@ a:hover { color: var(--navy); }
 .main-nav { display: flex; flex-wrap: wrap; gap: .25rem 1.75rem; font-weight: 600; }
 .main-nav a { text-decoration: none; padding-bottom: .25rem; border-bottom: 3px solid transparent; }
 .main-nav a[aria-current="page"] { color: var(--navy); border-bottom-color: var(--navy); }
-/* KMI logo on the right: the English line under 한국해양수산개발원 is covered by the center name. */
-.brand-kmi { position: relative; display: block; width: 210px; margin-left: auto; color: #231916; }
+/* KMI logo on the left: the English line under 한국해양수산개발원 is covered by the center name. */
+.brand-kmi { position: relative; display: block; width: 210px; color: #231916; }
 .brand-kmi img { display: block; width: 100%; height: auto; clip-path: polygon(0 0, 100% 0, 100% 60%, 27% 60%, 27% 100%, 0 100%); }
 .brand-kmi-center { position: absolute; left: calc(100% * 123 / 409); top: 60%; width: calc(100% * 286 / 409); fill: currentColor; overflow: visible; }
 .brand-kmi-center text { font-size: 26px; font-weight: 600; }
