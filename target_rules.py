@@ -26,7 +26,7 @@ SEA = re.compile(
 )
 MARITIME = SEA
 NOT_SUPPORT = re.compile(
-    r"채용|입찰|용역|운영기관\s*(?:모집|선정)|수행기관\s*(?:모집|선정)|위탁기관|평가위원|심사위원|위원\s*모집|"
+    r"채용|입찰|용역|운영기관\s*(?:모집|선정)|수행기관\s*(?:모집|선정)|총괄\s*주관\s*(?:연구\s*개발\s*)?기관\s*(?:모집|선정)|위탁기관|평가위원|심사위원|위원\s*모집|"
     r"자문단\s*모집|강사\s*모집|멘토\s*모집|포상|유공|시상식|결과\s*(?:발표|공고|안내)|선정\s*결과|최종\s*선정|"
     r"합격자|취소\s*공고|운영\s*제안\s*모집|구직자|통합연구지원시스템\s*운영|(?<![A-Za-z])TEST(?![A-Za-z])|"
     r"상가\s*임대|임대\s*공급|수의\s*계약|"
@@ -34,6 +34,8 @@ NOT_SUPPORT = re.compile(
 )
 INDIVIDUAL_FISHERS = re.compile(r"직불|직접\s*지불|어촌\s*정착|어업인|어업\s*활동|건강\s*검진|영어\s*정착|농어촌\s*민박|귀어|생계")
 INDIVIDUALS = re.compile(r"제대\s*군인|장병|구직자|미취업자|대학생|청소년|어르신")
+# Research programs for individual researchers ("기초연구사업(개인연구)", "개인기초연구"); a company cannot apply.
+RESEARCHERS = re.compile(r"개인\s*(?:기초\s*)?연구(?!\s*(?:소|원|기관|시설|장비))")
 FARMERS = re.compile(r"농업인|농업\s*법인|농가|농업\s*경영체|임업인|축산")
 COMPANIES = re.compile(r"기업|업체|사업자|소공인|(?<!농)(?<!축)(?<!림)수산|(?<!농)어업(?!인)")
 # Farm products and farm-food firms; fisheries words other than inside 농수산·농축수산 keep a notice.

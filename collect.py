@@ -66,6 +66,8 @@ def clean(value):
     return " ".join(BeautifulSoup(str(value or ""), "html.parser").stripped_strings)
 
 
+# BISTEP leaves Sectigo's intermediate certificate out of its answer; this file supplies it (certs/).
+BISTEP_CHAIN = ROOT / "certs" / "bistep-chain.pem"
 # Sites that serve no https at all; their pages are linked over http.
 HTTP_ONLY_HOSTS = {"wof.kr", "www.kinpr.or.kr", "www.offshorekorea.org"}
 
@@ -89,8 +91,9 @@ def reader(samples):
         if name in ("kimst_rnd", "kimst_notice", "jcia", "tp_planning", "biz_planning",
                     "bistep_planning", "nia_planning", "nipa_demand", "keit_planning"):
             # These publishers work with curl on the development host.
+            chain = ["--cacert", str(BISTEP_CHAIN)] if urlsplit(url).hostname == "www.bistep.re.kr" else []
             raw = subprocess.check_output(["curl", "-fsSL", "--max-time", "20", "--max-filesize",
-                                           "8000000", "--proto", "=https",
+                                           "8000000", "--proto", "=https", *chain,
                                            "--user-agent", "K-OceanX pilot/0.1", url])
         else:
             request = Request(url, data=data, headers={"User-Agent": "K-OceanX pilot/0.1"})
@@ -478,7 +481,7 @@ def announcements(get, source, url, selector, key, category):
 
 def iris(get):
     url = "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do"
-    rows, seen = [], set()
+    rows, seen, openings = [], set(), {}
     # The open-call list shows ten items a page; read every page until no new item appears.
     for page_no in range(1, 21):
         added = 0
@@ -498,12 +501,37 @@ def iris(get):
                 sub_title = sub.get_text(" ", strip=True).removeprefix("사업공고명").strip()
                 if sub_title and sub_title != title:
                     title += f" · {sub_title}"
-            rows.append(record("iris", key, title, params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]),
-                               "rnd", deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
+            detail = params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0])
+            if args[0] not in openings:
+                openings[args[0]] = iris_opening(get, detail)
+            rows.append(record("iris", key, title, detail, "rnd", deadline=iso(args[6]),
+                               eligibility=openings[args[0]],
+                               planning_stage=planning_type(title) or "application"))
         if not added:
             break
-    # Government R&D is open to every industry unless the notice names another one.
-    return [row for row in require(rows) if judge(row["title"])[0]]
+    # The judging step decides with the other sources' notices, reading the opening as the stated target.
+    return require(rows)
+
+
+IRIS_INVITE = re.compile(r"(?:공고|공모|모집)\s*(?:하오니|하니|합니다)|참여\s*(?:를\s*)?바랍니다")
+IRIS_SENTENCE_END = re.compile(r"(?:바랍니다|합니다|주십시오)\s*\.?")
+
+
+def iris_opening(get, url):
+    """The opening of an IRIS notice up to the sentence that says who is invited to apply
+    ("…기초연구사업(개인연구) … 공고합니다", "…하고자 하는 기관(협·단체 등)은 … 신청하여 주시기 바랍니다").
+    The full rules sit in attached files; the opening is the one statement every notice makes.
+    Empty when the page cannot be read, and the notice is then judged on its title."""
+    try:
+        body = page(get, "iris", url).select_one("div.tb_contents")
+    except PLANNING_HTTP:
+        return ""
+    text = " ".join(body.get_text(" ", strip=True).split()).removeprefix("■ 공고문").strip() if body else ""
+    invite = IRIS_INVITE.search(text)
+    if not invite:
+        return ""
+    end = IRIS_SENTENCE_END.search(text, invite.start())
+    return text[:end.end() if end else invite.end()][:500].strip()
 
 
 def kmi(get):
@@ -1636,6 +1664,22 @@ def mabik_events(get, today):
     return rows
 
 
+# Institution event pages that could not be read in this collection (filled by institution_events).
+UNREACHED_EVENT_PAGES = []
+
+
+def carried_institution_events(keys, today):
+    """Events from institution pages that could not be read this time, as the last publication
+    listed them, until they end. Some pages fail now and then from the collection server abroad
+    (KINTEX, 선박해양플랜트연구소 and others, 11.22–11.26) while they open normally in Korea; their
+    events would otherwise vanish from the schedule for that day."""
+    prefixes = tuple(f"institution_event:{key}-" for key in keys)
+    return [row for row in published_data().get("records", ())
+            if prefixes and row.get("source") == "institution_event" and row.get("category") == "domestic" and
+            str(row.get("id", "")).startswith(prefixes) and
+            upcoming(row.get("event_start", ""), row.get("event_end", ""), today, days=400)]
+
+
 def institution_events(get):
     today = kst_today()
     rows, failed = [], []
@@ -1656,6 +1700,7 @@ def institution_events(get):
             rows.extend(found)
     print("institution events: " + ", ".join(f"{key} {count}" for key, count in counts.items() if count) +
           (f"; unreachable {', '.join(failed)}" if failed else ""), flush=True)
+    UNREACHED_EVENT_PAGES[:] = failed
     if len(failed) == len(readers):
         raise ValueError("No institution event page could be read")
     return list({row["id"]: row for row in rows}.values())
@@ -2262,6 +2307,13 @@ def build(samples):
     if not samples and "press_event" in sources:
         for row in carried_press_events(kst_today()):
             records.setdefault(row["id"], row)
+    # Events of an institution page that failed this time stay as last published, until they end.
+    if not samples and UNREACHED_EVENT_PAGES:
+        carried = [row for row in carried_institution_events(UNREACHED_EVENT_PAGES, kst_today())
+                   if row["id"] not in records]
+        for row in carried:
+            records[row["id"]] = row
+        print(f"institution events kept from the last publication: {len(carried)}", flush=True)
     # One listing per notice and per event, across all sources.
     before = dict(records)
     for key in judging.drop_duplicates(records):

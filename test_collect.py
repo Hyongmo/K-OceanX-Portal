@@ -11,8 +11,9 @@ from collect import (
     mabik_events, press_events, manual_events, carried_press_events, event_name, page_event,
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
     agency_name, agency_region, agency_registry, city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
-    pohang_support, record,
+    pohang_support, record, iris_opening, carried_institution_events,
 )
+from judging import include
 from support_taxonomy import classify_support
 from target_rules import age_bands, judge, other_trades_only, sector_profile, tech_only
 
@@ -322,9 +323,13 @@ class OfficialApiTest(unittest.TestCase):
                     f'\'2026/12/01\')">{title}</a></li>')
         pages = {1: item(1, "2026년 A 기술개발사업 공고") + item(2, "2026년 B 기술개발사업 공고"),
                  2: item(3, "2026년 C 기술개발사업 공고"), 3: ""}
-        calls = []
+        calls, details = [], []
 
         def get(name, url):
+            if "ancmId=" in url:
+                details.append(url.rsplit("=", 1)[1])
+                return ('<div class="tb_contents"><strong>■ 공고문</strong> 2026년 기술개발사업 신규과제를 '
+                        '다음과 같이 공고하오니 중소기업의 많은 참여 바랍니다. 1. 사업개요</div>').encode()
             number = int(re.search(r"pageIndex=(\d+)", url)[1])
             calls.append(number)
             return f"<ul>{pages.get(number, '')}</ul>".encode()
@@ -332,6 +337,38 @@ class OfficialApiTest(unittest.TestCase):
         rows = iris(get)
         self.assertEqual([row["title"][6:7] for row in rows], ["A", "B", "C"])
         self.assertEqual(calls, [1, 2, 3])
+        self.assertEqual(details, ["1", "2", "3"])
+        self.assertTrue(rows[0]["eligibility"].endswith("중소기업의 많은 참여 바랍니다."))
+
+    def test_iris_opening_stops_at_the_invitation(self):
+        def get(name, url):
+            return ('<div class="tb_contents">■ 공고문 2027년도 과학기술정보통신부 기초연구사업(개인연구) 1차 신규과제 '
+                    '선정지원 계획을 다음과 같이 공고합니다. 2026년 11월 5일 국방 분야 안내</div>').encode()
+        self.assertEqual(iris_opening(get, "https://www.iris.go.kr/x?ancmId=1"),
+                         "2027년도 과학기술정보통신부 기초연구사업(개인연구) 1차 신규과제 선정지원 계획을 다음과 같이 공고합니다.")
+        self.assertEqual(iris_opening(lambda name, url: b"<p>no body</p>", "https://www.iris.go.kr/x"), "")
+
+    def test_programs_a_company_cannot_apply_to(self):
+        self.assertEqual(include("2027년도 1차 개인기초연구(신진연구(유형A)) 신규과제 공모"), (False, "연구자 개인 대상"))
+        self.assertEqual(include("2027년도 기초연구 신규과제 공모", "기초연구사업(개인연구) 1차 신규과제 선정지원 계획"),
+                         (False, "연구자 개인 대상"))
+        self.assertEqual(include("소재부품장비 양산성능평가지원사업 총괄주관연구개발기관 모집 공고")[0], False)
+        # A company research program and a researcher's own lab stay.
+        self.assertTrue(include("해양 AI 기술개발 주관연구개발기관 모집 공고")[0])
+        self.assertTrue(include("개인연구소 보유 중소기업 기술개발 지원")[0])
+
+    def test_events_of_an_unreached_page_stay_until_they_end(self):
+        published = {"records": [
+            {"id": "institution_event:kintex-1", "source": "institution_event", "category": "domestic",
+             "title": "스마트건설·안전·AI 엑스포", "event_start": "2026-11-25", "event_end": "2026-11-27"},
+            {"id": "institution_event:kintex-2", "source": "institution_event", "category": "domestic",
+             "title": "지난 행사", "event_start": "2026-11-01", "event_end": "2026-11-02"},
+            {"id": "institution_event:kriso-3", "source": "institution_event", "category": "domestic",
+             "title": "다른 기관 행사", "event_start": "2026-12-01"}]}
+        with patch("collect.published_data", return_value=published):
+            self.assertEqual([row["id"] for row in carried_institution_events(["kintex"], "2026-11-26")],
+                             ["institution_event:kintex-1"])
+            self.assertEqual(carried_institution_events([], "2026-11-26"), [])
 
     def test_stated_target_reads_the_line_after_the_first_marker(self):
         self.assertEqual(stated_target("개요입니다. ☞ 관내 수산식품기업 ☞ 포장재 지원"), "관내 수산식품기업")

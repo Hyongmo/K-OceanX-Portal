@@ -22,7 +22,7 @@ import re
 from difflib import SequenceMatcher
 
 from target_rules import (FARM_TARGET, FARMERS, FISHER_COMPANY, FISHER_ONLY, FISHERY_WORD, FOOD_LODGING,
-                          INDIVIDUAL_FISHERS, INDIVIDUALS, COMPANIES, EXCLUDED_CLAUSE, OPEN_LIST, NOT_SUPPORT,
+                          INDIVIDUAL_FISHERS, INDIVIDUALS, RESEARCHERS, COMPANIES, EXCLUDED_CLAUSE, OPEN_LIST, NOT_SUPPORT,
                           OTHER_INDUSTRY, SEA, SMALL_MERCHANTS, age_bands, other_trades_only, training_scope)
 
 # ---------- 1. kind ----------
@@ -94,6 +94,8 @@ def include(title, target="", official_target="", training=False):
         return False, "어업인 개인 지원"
     if INDIVIDUALS.search(title) and "기업" not in title:
         return False, "개인 대상"
+    if RESEARCHERS.search(f"{title} {kept}") and "기업" not in f"{title} {kept}":
+        return False, "연구자 개인 대상"
     if training:
         keep, reason = training_scope(title)
         if not keep:
