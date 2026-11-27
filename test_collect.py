@@ -11,7 +11,7 @@ from collect import (
     mabik_events, press_events, manual_events, carried_press_events, event_name, page_event,
     NOR_SHIPPING, announcements, bistep_planning, bizinfo_api, bizinfo_events, classify_information, date_range,
     agency_name, agency_region, agency_registry, city_regions, content_regions, drop_hub_duplicates, iris, region_hint, stated_regions, komeri, kstartup_ages, kstartup_api, merge_exhibitions, nia_planning, nor_shipping, period_note, planning_fields, stated_target,
-    pohang_support, record, iris_opening, carried_institution_events,
+    pohang_support, record, iris_opening, carried_institution_events, keep_last_published,
 )
 from judging import include
 from support_taxonomy import classify_support
@@ -334,10 +334,13 @@ class OfficialApiTest(unittest.TestCase):
             calls.append(number)
             return f"<ul>{pages.get(number, '')}</ul>".encode()
 
-        rows = iris(get)
+        order = []
+        rows = iris(lambda name, url: (order.append("detail" if "ancmId=" in url else "list"), get(name, url))[1], pause=0)
         self.assertEqual([row["title"][6:7] for row in rows], ["A", "B", "C"])
         self.assertEqual(calls, [1, 2, 3])
         self.assertEqual(details, ["1", "2", "3"])
+        # Every list page is read before any call's own page.
+        self.assertEqual(order, ["list"] * 3 + ["detail"] * 3)
         self.assertTrue(rows[0]["eligibility"].endswith("중소기업의 많은 참여 바랍니다."))
 
     def test_iris_opening_stops_at_the_invitation(self):
@@ -356,6 +359,19 @@ class OfficialApiTest(unittest.TestCase):
         # A company research program and a researcher's own lab stay.
         self.assertTrue(include("해양 AI 기술개발 주관연구개발기관 모집 공고")[0])
         self.assertTrue(include("개인연구소 보유 중소기업 기술개발 지원")[0])
+
+    def test_a_failed_source_keeps_its_last_published_notices(self):
+        published = {"records": [
+            {"id": "iris:1", "source": "iris", "title": "지난번 IRIS 공고"},
+            {"id": "iris:2", "source": "iris", "title": "이번에도 읽힌 공고"},
+            {"id": "kimst_rnd:3", "source": "kimst_rnd", "title": "다른 수집처 공고"}]}
+        records = {"iris:2": {"id": "iris:2", "source": "iris", "title": "이번에 새로 읽은 공고"}}
+        with patch("collect.published_data", return_value=published):
+            keep_last_published(["iris"], records)
+        self.assertEqual(sorted(records), ["iris:1", "iris:2"])
+        self.assertEqual(records["iris:2"]["title"], "이번에 새로 읽은 공고")
+        with patch("collect.published_data", return_value={}), self.assertRaises(SystemExit):
+            keep_last_published(["iris"], {})
 
     def test_events_of_an_unreached_page_stay_until_they_end(self):
         published = {"records": [

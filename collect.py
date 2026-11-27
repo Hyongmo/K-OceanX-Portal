@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import unicodedata
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
@@ -479,9 +480,9 @@ def announcements(get, source, url, selector, key, category):
     return require(rows)
 
 
-def iris(get):
+def iris(get, pause=1.0):
     url = "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do"
-    rows, seen, openings = [], set(), {}
+    rows, seen = [], set()
     # The open-call list shows ten items a page; read every page until no new item appears.
     for page_no in range(1, 21):
         added = 0
@@ -501,16 +502,23 @@ def iris(get):
                 sub_title = sub.get_text(" ", strip=True).removeprefix("사업공고명").strip()
                 if sub_title and sub_title != title:
                     title += f" · {sub_title}"
-            detail = params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0])
-            if args[0] not in openings:
-                openings[args[0]] = iris_opening(get, detail)
-            rows.append(record("iris", key, title, detail, "rnd", deadline=iso(args[6]),
-                               eligibility=openings[args[0]],
-                               planning_stage=planning_type(title) or "application"))
+            rows.append(record("iris", key, title,
+                               params(urljoin(url, "retrieveBsnsAncmView.do"), ancmId=args[0]), "rnd",
+                               deadline=iso(args[6]), planning_stage=planning_type(title) or "application"))
         if not added:
             break
+    require(rows)
+    # Each call's own page is read only after the whole list, a second apart: reading them between
+    # list pages made IRIS refuse the next list page from the collection server (runs 69 and 71).
+    openings = {}
+    for row in rows:
+        if row["url"] not in openings:
+            if openings and pause:
+                time.sleep(pause)
+            openings[row["url"]] = iris_opening(get, row["url"])
+        row["eligibility"] = openings[row["url"]]
     # The judging step decides with the other sources' notices, reading the opening as the stated target.
-    return require(rows)
+    return rows
 
 
 IRIS_INVITE = re.compile(r"(?:공고|공모|모집)\s*(?:하오니|하니|합니다)|참여\s*(?:를\s*)?바랍니다")
@@ -1996,6 +2004,17 @@ def drop_event_duplicates(records):
     judging.drop_duplicates(records)
 
 
+def keep_last_published(failed, records):
+    """Add to records what the last publication listed from each failed source."""
+    published = published_data().get("records") or []
+    if not published:
+        raise SystemExit("Collection failed: " + ", ".join(failed) + " (no published data to keep)")
+    for key in failed:
+        kept_rows = [row for row in published if row.get("source") == key and row.get("id") not in records]
+        records.update((row["id"], row) for row in kept_rows)
+        print(f"{key} failed: {len(kept_rows)} kept from the last publication", flush=True)
+
+
 def optional(collect):
     def run(get):
         try:
@@ -2242,7 +2261,11 @@ def build(samples):
             except Exception as error:
                 failed.append(key)
                 print(f"{key}: {type(error).__name__} {getattr(error, 'code', '')}", file=sys.stderr)
-    if failed:
+    # A source that cannot be read this time keeps what the last publication listed from it, and the
+    # rest is published (the scheduled run at 03:19 has nobody to start it again; run 71 published
+    # nothing because IRIS alone failed). When half the sources fail the problem is the connection,
+    # not a source, and nothing is published.
+    if failed and (samples or len(failed) * 2 > len(sources)):
         raise SystemExit("Collection failed: " + ", ".join(failed))
 
     # Sources judged as they were read (K-Startup, Bizinfo) already went through the judging step;
@@ -2314,6 +2337,8 @@ def build(samples):
         for row in carried:
             records[row["id"]] = row
         print(f"institution events kept from the last publication: {len(carried)}", flush=True)
+    if failed:
+        keep_last_published(failed, records)
     # One listing per notice and per event, across all sources.
     before = dict(records)
     for key in judging.drop_duplicates(records):
@@ -2329,6 +2354,7 @@ def build(samples):
     shutil.copytree(ROOT / "site/logos", dist / "logos", dirs_exist_ok=True)
     updated_at = datetime.now(timezone.utc)
     payload = {"updated_at": updated_at.isoformat(), "sample": bool(samples),
+               **({"kept_from_last": failed} if failed else {}),
                "sources": {key: label for key, (label, _) in sources.items() if key != "nipa_demand" or
                            any(row["source"] == key for row in records.values())},
                "support_facets": {"types": TYPES, "stages": STAGES, "methods": METHODS,
